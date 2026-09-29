@@ -1,0 +1,56 @@
+{
+  "evaluated_commit": "2cb47c2b9b057ebe71b27376e6433cc7122acf2f",
+  "scope": "current-byte revalidation of pagination authority and NFF logical fence",
+  "findings": [
+    {
+      "id": "pagination-dual-acquire",
+      "status": "CONFIRMED",
+      "evidence": "Current GithubClaimLease still reads only comments?per_page=100; the WireMock ClaimPaginationRaceCourt was re-run against current bytes and passed, reproducing two competing claimers both returning Acquired.",
+      "locators": [
+        "adapters/github/src/main/java/com/github/oinsio/gnomish/adapter/tracker/github/GithubClaimLease.java:176",
+        "evidence/COURTS/ClaimPaginationRaceCourt.groovy"
+      ]
+    },
+    {
+      "id": "pagination-propagation",
+      "status": "CONFIRMED",
+      "evidence": "The same unpaginated 100-comment read remains in heartbeat, stale removal, index repair, and the marker reader used by fetchTask.",
+      "locators": [
+        "adapters/github/src/main/java/com/github/oinsio/gnomish/adapter/tracker/github/GithubHeartbeat.java:98",
+        "adapters/github/src/main/java/com/github/oinsio/gnomish/adapter/tracker/github/GithubStaleClaimRemoval.java:163",
+        "adapters/github/src/main/java/com/github/oinsio/gnomish/adapter/tracker/github/GithubIndexRepair.java:100",
+        "adapters/github/src/main/java/com/github/oinsio/gnomish/adapter/tracker/github/GithubAbortFactsReader.java:80",
+        "adapters/github/src/main/java/com/github/oinsio/gnomish/adapter/tracker/github/GithubTaskFetcher.java:111"
+      ]
+    },
+    {
+      "id": "nff-logical-fence",
+      "status": "CONFIRMED",
+      "evidence": "BestEffortPush remains void and logs PushOutcome.describe failures without throwing; post-persist revocation still relies on tracker.fetchTask, so NFF protects the remote ref but is not by itself a logical single-holder fence.",
+      "locators": [
+        "adapters/git/src/main/java/com/github/oinsio/gnomish/adapter/git/BestEffortPush.java:73",
+        "adapters/git/src/main/java/com/github/oinsio/gnomish/adapter/git/BestEffortPush.java:110",
+        "application/src/main/java/com/github/oinsio/gnomish/app/take/RevocationCheckingAttemptPersistence.java:167"
+      ]
+    },
+    {
+      "id": "truncation-assisted-revocation-bypass",
+      "status": "CONFIRMED",
+      "evidence": "fetchTask still derives markers through GithubAbortFactsReader, whose comments read is truncated at 100; both pre-write re-verification and post-persist revocation checks call tracker.fetchTask.",
+      "locators": [
+        "application/src/main/java/com/github/oinsio/gnomish/app/take/RevocationCheckingAttemptPersistence.java:151",
+        "application/src/main/java/com/github/oinsio/gnomish/app/take/RevocationCheckingAttemptPersistence.java:185"
+      ]
+    }
+  ],
+  "commands": [
+    {
+      "command": "./gradlew :adapters:github:test --tests 'com.github.oinsio.gnomish.adapter.tracker.github.ClaimPaginationRaceCourt'",
+      "exit_code": 0,
+      "result": "BUILD SUCCESSFUL"
+    }
+  ],
+  "notes": [
+    "2cb47c2 changed GithubClaimLease interrupt cleanup behavior but did not add pagination to listComments."
+  ]
+}
