@@ -1,7 +1,12 @@
 {
-  "commit": "7727344232d339867559ee968b4f695bf99f6a85",
-  "tree": "27abca489a07d77256ffc054f6e61ad5f839186b",
+  "commit": "2cb47c2b9b057ebe71b27376e6433cc7122acf2f",
+  "tree": "cfcb2db8a7f0d9504e9c2a94a5a0926b8a715d20",
   "status": "clean",
   "branch": "main",
-  "audited_at": "2026-09-29T15:48:35Z"
+  "audited_at": "2026-09-29T15:48:35Z",
+  "revalidated_at": "2026-09-30T01:50:00Z",
+  "revalidated_commit": "2cb47c2b9b057ebe71b27376e6433cc7122acf2f",
+  "revalidated_tree": "cfcb2db8a7f0d9504e9c2a94a5a0926b8a715d20",
+  "original_audit_commit": "7727344232d339867559ee968b4f695bf99f6a85",
+  "original_audit_tree": "27abca489a07d77256ffc054f6e61ad5f839186b"
 }
