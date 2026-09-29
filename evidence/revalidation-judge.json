@@ -1,0 +1,57 @@
+{
+  "evaluated_commit": "2cb47c2b9b057ebe71b27376e6433cc7122acf2f",
+  "scope": "current-byte revalidation of judge argv, permission policy, verdict extraction and same-attempt environment reuse",
+  "findings": [
+    {
+      "id": "judge-empty-intersection-argv",
+      "status": "CONFIRMED",
+      "evidence": "renderForJudge still omits --allowedTools entirely when the manifest allowedTools contains only Write/Edit/Bash; current AgentInvocationOptionsSpec asserts argv == [--model, m].",
+      "locators": [
+        "adapters/agent/src/test/groovy/com/github/oinsio/gnomish/adapter/agent/AgentInvocationOptionsSpec.groovy:268-278"
+      ]
+    },
+    {
+      "id": "judge-write-exploitability",
+      "status": "CHANGED",
+      "evidence": "The old argv omission survives, but 2cb47c2 added role-fixed JUDGE permission mode dontAsk and --strict-mcp-config to the actually launched argv, with tests asserting no acceptEdits/bypassPermissions. A live successful Write/Edit/Bash judge remains unproven; the previous risk statement must now include this new hard permission fence and must not imply direct write capability.",
+      "locators": [
+        "adapters/agent/src/main/java/com/github/oinsio/gnomish/adapter/agent/AgentRole.java:4-19",
+        "adapters/agent/src/main/java/com/github/oinsio/gnomish/adapter/agent/AgentCommandLine.java:56-67",
+        "adapters/agent/src/test/groovy/com/github/oinsio/gnomish/adapter/agent/AgentCommandLineSpec.groovy:86-96"
+      ]
+    },
+    {
+      "id": "judge-first-json-pass-smuggling",
+      "status": "CONFIRMED",
+      "evidence": "JudgeVerdictExtractor still strips the first fence and takes the first balanced JSON object. The current JudgeVerdictExtractorSpec documents first-object behavior and passes.",
+      "locators": [
+        "adapters/agent/src/main/java/com/github/oinsio/gnomish/adapter/agent/JudgeVerdictExtractor.java:74-81",
+        "adapters/agent/src/main/java/com/github/oinsio/gnomish/adapter/agent/JudgeVerdictExtractor.java:127-149",
+        "adapters/agent/src/test/groovy/com/github/oinsio/gnomish/adapter/agent/JudgeVerdictExtractorSpec.groovy:12-15"
+      ]
+    },
+    {
+      "id": "same-attempt-judge-environment-reuse",
+      "status": "CONFIRMED",
+      "evidence": "FreshJudgeEnvironments still returns the same current environment when the attempt SHA matches; a new attempt SHA disposes/replaces it.",
+      "locators": [
+        "adapters/agent/src/main/java/com/github/oinsio/gnomish/adapter/agent/FreshJudgeEnvironments.java:56-63"
+      ]
+    }
+  ],
+  "commands": [
+    {
+      "command": "./gradlew :adapters:agent:test --tests 'com.github.oinsio.gnomish.adapter.agent.AgentInvocationOptionsSpec' --tests 'com.github.oinsio.gnomish.adapter.agent.AgentCommandLineSpec'",
+      "exit_code": 0,
+      "result": "BUILD SUCCESSFUL"
+    },
+    {
+      "command": "./gradlew --no-daemon --max-workers=2 :adapters:agent:test --tests 'com.github.oinsio.gnomish.adapter.agent.JudgeVerdictExtractorSpec'",
+      "exit_code": 0,
+      "result": "BUILD SUCCESSFUL"
+    }
+  ],
+  "notes": [
+    "No live provider mutation test was used; write exploitability is not claimed."
+  ]
+}
