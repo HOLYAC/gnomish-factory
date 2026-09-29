@@ -1,0 +1,71 @@
+{
+  "evaluated_commit": "2cb47c2b9b057ebe71b27376e6433cc7122acf2f",
+  "scope": "revalidation of audit findings not directly invalidated by 2cb47c2, plus changed-path analysis where implementation was touched",
+  "findings": [
+    {
+      "id": "remote-history-no-force-protection",
+      "status": "CONFIRMED",
+      "evidence": "The audited no-force/remote-history protection path was not changed by 2cb47c2. Current git ancestry tests pass; BestEffortPush semantics remain remote protection rather than logical authority.",
+      "locators": [
+        "adapters/git/src/main/java/com/github/oinsio/gnomish/adapter/git/BestEffortPush.java:73-118",
+        "adapters/git/src/test/groovy/com/github/oinsio/gnomish/adapter/git/DeliveryAncestrySpec.groovy"
+      ]
+    },
+    {
+      "id": "zombie-fence-test-contract",
+      "status": "CONFIRMED",
+      "evidence": "Current ZombieFenceSpec passes. It continues to test revocation when tracker ownership changes; it does not turn BestEffortPush NFF into a throwing logical fence.",
+      "locators": [
+        "application/src/test/groovy/com/github/oinsio/gnomish/app/ZombieFenceSpec.groovy"
+      ]
+    },
+    {
+      "id": "sandbox-operator-only-loosening",
+      "status": "CONFIRMED",
+      "evidence": "2cb47c2 touched BindingProperties, but current BindingResolverSpec and BindingRatificationSpec pass. The operator-owned binding / repo-only tightening boundary remains enforced.",
+      "locators": [
+        "sandbox/core/src/main/java/com/github/oinsio/gnomish/sandbox/BindingResolver.java",
+        "sandbox/core/src/main/java/com/github/oinsio/gnomish/sandbox/BindingTrustTable.java",
+        "sandbox/core/src/test/groovy/com/github/oinsio/gnomish/sandbox/BindingResolverSpec.groovy",
+        "sandbox/core/src/test/groovy/com/github/oinsio/gnomish/sandbox/BindingRatificationSpec.groovy"
+      ]
+    },
+    {
+      "id": "sandbox-l7-residual",
+      "status": "CONFIRMED",
+      "evidence": "No 2cb47c2 change introduced L7/path scoping into the shipped egress guard; the prior hostname-allowlist residual remains applicable.",
+      "locators": [
+        "evidence/sandbox-security-boundary.json"
+      ]
+    },
+    {
+      "id": "recovery-ownership",
+      "status": "CONFIRMED",
+      "evidence": "Reaper.java changed for interrupt/stop short-circuiting, but the shape-routing switch and recovery ownership semantics were not replaced. The direct BranchShape/TrackerShape/RecoveryOwner primitives were not changed by 2cb47c2.",
+      "locators": [
+        "application/src/main/java/com/github/oinsio/gnomish/app/lease/Reaper.java:188-248",
+        "domain/src/main/java/com/github/oinsio/gnomish/domain/branch/RecoveryOwner.java"
+      ]
+    }
+  ],
+  "commands": [
+    {
+      "command": "./gradlew --no-daemon --max-workers=2 :adapters:git:test --tests 'com.github.oinsio.gnomish.adapter.git.DeliveryAncestrySpec'",
+      "exit_code": 0,
+      "result": "BUILD SUCCESSFUL"
+    },
+    {
+      "command": "./gradlew --no-daemon --max-workers=2 :application:test --tests 'com.github.oinsio.gnomish.app.ZombieFenceSpec'",
+      "exit_code": 0,
+      "result": "BUILD SUCCESSFUL"
+    },
+    {
+      "command": "./gradlew --no-daemon --max-workers=2 :sandbox:core:test --tests 'com.github.oinsio.gnomish.sandbox.BindingResolverSpec' --tests 'com.github.oinsio.gnomish.sandbox.BindingRatificationSpec'",
+      "exit_code": 0,
+      "result": "BUILD SUCCESSFUL"
+    }
+  ],
+  "infra_notes": [
+    "An earlier combined parallel Gradle invocation hit EOFException in :adapters:git:test; the same targeted git and application specs were rerun separately and both passed."
+  ]
+}
