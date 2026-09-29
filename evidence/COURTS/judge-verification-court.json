@@ -1,0 +1,51 @@
+{
+  "court": "judge-verification-adversarial-audit",
+  "cell": "gnomish.judge-verification",
+  "created_at": "2026-09-29T20:28:00Z",
+  "evaluated_commit": "7727344232d339867559ee968b4f695bf99f6a85",
+  "judges": [
+    {
+      "name": "Judge Tool-Permission Argv Collapse Judge",
+      "target_component": "com.github.oinsio.gnomish.adapter.agent.AgentInvocationOptions",
+      "method": "renderForJudge",
+      "invariant": "A judge round argv MUST always carry explicit tool restriction flags and must not omit them when requested tools contain no read-only tools.",
+      "tested_scenario": "Stage manifest specifies verify judge with allowedTools: ['Write', 'Bash'] or allowedTools: []",
+      "verdict": "FAIL",
+      "physical_result": "AgentInvocationOptions.renderForJudge filters requested tools against JUDGE_READ_ONLY_TOOLS (['Read', 'Grep', 'Glob']). When the intersection is empty, effectiveJudgeAllowedTools returns an empty list. addToolListFlag omits the --allowedTools flag entirely if tools are empty. The resulting argv is ['--model', '<model>'] with NO --allowedTools parameter.",
+      "classification": "CONFIRMED_ARGV_GAP",
+      "runtime_exploitability": "UNVERIFIED (live nested provider invocation restricted by Teamwork anti-recursion harness; actual tool authorization depends on vendor CLI default permission mode in non-interactive print mode)"
+    },
+    {
+      "name": "FreshJudgeEnvironments Shared Container Judge",
+      "target_component": "com.github.oinsio.gnomish.adapter.agent.FreshJudgeEnvironments",
+      "method": "environmentFor",
+      "invariant": "Multi-vote quorum environments must maintain isolation if execution environments permit mutation.",
+      "tested_scenario": "Multiple judge votes executed sequentially for the same attempt commit SHA",
+      "verdict": "CONDITIONAL_RISK",
+      "physical_result": "FreshJudgeEnvironments reuses the exact same container instance for all votes of an attempt: 'if (current != null && sha.equals(currentSha)) return current;'. If an earlier vote performs filesystem mutations (conditional on ARGV gap exploitability), subsequent votes execute in the contaminated container.",
+      "classification": "CONFIRMED_SHARED_INSTANCE"
+    },
+    {
+      "name": "JudgeVerdictExtractor Code-Fence Desynchronization & Pass-Smuggling Judge",
+      "target_component": "com.github.oinsio.gnomish.adapter.agent.JudgeVerdictExtractor",
+      "method": "extract",
+      "invariant": "The final verdict extracted from the judge model MUST correspond to the model's actual terminal evaluation and must not be fooled by illustrative snippets in preceding commentary.",
+      "tested_scenario": "Judge model response quotes a mock configuration with {'passed': true} in an early code block, followed by analysis and a terminal verdict {'passed': false, 'findings': ['...']}",
+      "verdict": "FAIL",
+      "physical_result": "JudgePromptBuilder instructs the model: 'End your final message with a JSON object...'. However, JudgeVerdictExtractor uses FENCE.matcher(text).find() to match the FIRST code fence in the text, and scans for the FIRST balanced '{...}' block. When the model includes preliminary code examples or mock JSON objects before its final verdict, the extractor parses the preliminary block. If that block contains 'passed: true', the round is recorded as Verdict.Pass(), silently ignoring the real failure and advancing unverified work into production.",
+      "classification": "CONFIRMED_VULNERABILITY"
+    },
+    {
+      "name": "JudgeVerdictExtractor Non-JSON Code Fence CannotVerify Taint Judge",
+      "target_component": "com.github.oinsio.gnomish.adapter.agent.JudgeVerdictExtractor",
+      "method": "extract",
+      "invariant": "A model that correctly identifies a quality failure but cites code snippets should fail the attempt, not trigger an unburned infrastructure escalation.",
+      "tested_scenario": "Judge quotes Java/C/Rust method containing braces in a code block before its final JSON verdict fence",
+      "verdict": "FAIL",
+      "physical_result": "The extractor captures the first fence containing Java/C/Rust code with braces, attempts to parse it via Jackson ObjectMapper, fails with JsonParseException, and returns Verdict.CannotVerify. In JudgeVoting, a single CannotVerify immediately short-circuits the voting loop and escalates without burning an attempt, converting legitimate quality failures into infrastructure outages.",
+      "classification": "CONFIRMED_VULNERABILITY"
+    }
+  ],
+  "overall_verdict": "VULNERABILITIES_AND_GAPS_CONFIRMED",
+  "reproducer_spec": "evidence/COURTS/JudgeVerificationCourt.groovy"
+}

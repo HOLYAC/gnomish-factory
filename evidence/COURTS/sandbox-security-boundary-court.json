@@ -1,0 +1,99 @@
+{
+  "court": "sandbox-security-boundary-adversarial-audit",
+  "cell": "gnomish.sandbox-security-boundary",
+  "created_at": "2026-09-29T20:15:00Z",
+  "evaluated_commit": "7727344232d339867559ee968b4f695bf99f6a85",
+  "judges": [
+    {
+      "name": "Host Escape and Docker Socket Immunity Judge",
+      "boundary": "docker.sock and host filesystem exclusion",
+      "invariant": "Container runs with unprivileged isolation, no docker.sock mount, bounded cgroups, tmpfs-overridden declared volumes, and lexical path confinement on file channels.",
+      "evidence_spec": "com.github.oinsio.gnomish.sandbox.environment.DockerCommandsSpec, com.github.oinsio.gnomish.sandbox.environment.DeclaredVolumeOverridesSpec, com.github.oinsio.gnomish.sandbox.environment.ContainerFileChannelBoundarySpec",
+      "verdict": "PASS",
+      "implementation_status": "SHIPPED_CORE",
+      "details": "DockerCommands strictly constructs run argv with --network internal, --runtime, CPU/mem/pid limits. DeclaredVolumeOverrides replaces unlabelled VOLUME declarations with size-bounded tmpfs (64MB, mode 1777). ContainerFileChannel validates paths lexically against /gnomish/work and /gnomish/scratch, forbidding .git/** and .. escapes; transfers stream via stdin/stdout pipe on docker exec rather than docker cp."
+    },
+    {
+      "name": "Internal Network and Guard-Only Egress Judge",
+      "boundary": "Network egress default-deny",
+      "invariant": "Task container is joined solely to an internal network (--internal); all outbound traffic must pass through the mitmdump egress guard; direct egress and port 53 DNS are structurally unroutable.",
+      "evidence_spec": "com.github.oinsio.gnomish.sandbox.environment.EgressGuardSpec, com.github.oinsio.gnomish.sandbox.environment.EnvironmentSelfCheckSpec, com.github.oinsio.gnomish.sandbox.environment.EgressGuardConfigSpec",
+      "verdict": "PASS",
+      "implementation_status": "SHIPPED_CORE",
+      "details": "Network is created with --internal. Mitmdump acts as SNI/CONNECT proxy. Mandatory fail-closed EnvironmentSelfCheck executes before any round: probes verify direct-egress failure, denied-host refusal (HTTP 403), allowlisted host reachability, non-root user (uid != 0), and internal-only network metadata."
+    },
+    {
+      "name": "Non-Root and Read-Only Control Surface Integrity Judge",
+      "boundary": "In-box privilege boundary",
+      "invariant": "In-box process must execute as a non-root user (uid != 0); container engine enforces non-root via self-check; control configurations outside working copy are immutable to the gnome.",
+      "evidence_spec": "com.github.oinsio.gnomish.sandbox.environment.EnvironmentSelfCheckSpec, com.github.oinsio.gnomish.sandbox.environment.ContainerReadOnlySurfacesSpec",
+      "verdict": "PASS",
+      "implementation_status": "SHIPPED_CORE",
+      "details": "EnvironmentSelfCheck executes 'id -u' and fails closed if output is '0' (root). Baked cage control surfaces (/etc/gnomish/agent.toml, shell configs) remain root-owned in the image recipe, preventing the in-box agent from altering its own execution policies."
+    },
+    {
+      "name": "Asymmetric Needs Reconciliation and Binding Discovery Judge",
+      "boundary": "Configuration and binding ownership",
+      "invariant": "Repo manifests may only request tighter isolation (needs); binding selection and any loosening are strictly operator-owned; binding discovery ratifies against an immutable first-party trust table.",
+      "evidence_spec": "com.github.oinsio.gnomish.sandbox.SandboxReconcilerSpec, com.github.oinsio.gnomish.sandbox.BindingResolverSpec, com.github.oinsio.gnomish.sandbox.BindingRatificationSpec",
+      "verdict": "PASS",
+      "implementation_status": "SHIPPED_CORE",
+      "details": "BindingResolver binds container by default, requiring explicit operator config to downgrade to host. SandboxReconciler checks closed vocabulary SandboxNeed against CapabilityPassport, rejecting unknown or unmet needs fail-closed. BindingTrustTable validates discovered bindings against trusted first-party IDs and expected passports."
+    },
+    {
+      "name": "Fresh-Box Verification and Judge Isolation Judge",
+      "boundary": "Evaluation and grading separation",
+      "invariant": "Verification checks and judge votes run in isolated fresh container environments (<key>-v, <key>-j) pinned to attempt commits, preventing in-box residue or modified local configs from compromising verdicts.",
+      "evidence_spec": "com.github.oinsio.gnomish.sandbox.environment.ContainerEnvironmentsSpec, com.github.oinsio.gnomish.sandbox.environment.SelfCheckedEnvironmentSpec",
+      "verdict": "PASS",
+      "implementation_status": "SHIPPED_CORE",
+      "details": "ContainerEnvironments materializes distinct roles: round environment (<key>), fresh judge environment (<key>-j), and fresh verification environment (<key>-v). Each fresh environment gets independent volumes and guards seeded from attempt commit pins."
+    },
+    {
+      "name": "Object Ownership and Lifecycle Orphan Sweep Judge",
+      "boundary": "Docker object cleanup and resource lifecycle",
+      "invariant": "All Docker objects (containers, volumes, networks) are atomically labelled with environment key, ownership mode (tracked vs manual), and project identity; orphaned objects are reaped safely without destroying active session state.",
+      "evidence_spec": "com.github.oinsio.gnomish.sandbox.environment.SandboxLifecycleSweepSpec, com.github.oinsio.gnomish.sandbox.environment.SandboxLifecycleDecisionSpec, com.github.oinsio.gnomish.sandbox.environment.ObjectOwnershipClassifierSpec",
+      "verdict": "PASS",
+      "implementation_status": "SHIPPED_CORE",
+      "details": "ScopedObjectListing filters strictly by project identity. Tracked objects evaluate against LivenessVerdict; running boxes are stopped (volumes retained for salvage), while ephemeral helpers (guards, seed helpers) are disposed immediately. Manual objects follow age thresholds. Minimum age guard (default 2m) prevents race conditions during slot launch."
+    },
+    {
+      "name": "Residual Open Door: Egress L7 / Allowed-Host Exfiltration Judge",
+      "boundary": "Application-layer egress filtering",
+      "invariant": "Traffic to allowlisted domains is restricted to safe endpoints/methods; foreign repository exfiltration or data-in-URI is prevented.",
+      "evidence_spec": "docs/sandbox-threat-registry.md #15, #40",
+      "verdict": "RESIDUAL_OPEN_DOOR",
+      "implementation_status": "PROPOSED_HARDENING",
+      "details": "OPEN DOOR: Core egress guard filters solely by host/SNI at CONNECT/HTTP boundary. It does not perform L7 path/method filtering on TLS traffic (e.g. allowing github.com permits git push or API calls to foreign repos). EgressGuardConfig explicitly runs ignore_connection=True in tls_clienthello, bypassing TLS inspection."
+    },
+    {
+      "name": "Residual Open Door: AI-Provider Foreign Account and Token Substitution Judge",
+      "boundary": "AI API channel authentication",
+      "invariant": "Outbound requests to AI providers are stripped of foreign API keys and constrained to authorized billing accounts/budgets.",
+      "evidence_spec": "docs/sandbox-threat-registry.md #16, #31",
+      "verdict": "RESIDUAL_OPEN_DOOR",
+      "implementation_status": "PROPOSED_HARDENING",
+      "details": "OPEN DOOR: When api.anthropic.com or other LLM APIs are allowlisted, the container can supply its own foreign API key or leak context to unmonitored accounts. Core has no local AI gateway (LiteLLM/virtual keys) or TLS token-swapping proxy in place."
+    },
+    {
+      "name": "Residual Open Door: Provider Server-Side Web Tools Bypass Judge",
+      "boundary": "Server-side provider tooling",
+      "invariant": "LLM provider server-side web search or web fetch tools cannot be used by the model to exfiltrate data or retrieve un-audited code outside guard boundaries.",
+      "evidence_spec": "docs/sandbox-threat-registry.md #45, docs/guides/operator-guide-sandbox.md #297",
+      "verdict": "RESIDUAL_OPEN_DOOR",
+      "implementation_status": "PROPOSED_HARDENING",
+      "details": "OPEN DOOR: Provider-side tools (e.g. Claude or OpenAI web search/fetch) run entirely on the provider's infrastructure, bypassing the local mitmproxy egress guard. Documented interim operational mitigation is disabling server-side web tools on API keys; structural gateway enforcement is pending change B."
+    },
+    {
+      "name": "Residual Open Door: Artifact Depot and Poisoned Package Quarantine Judge",
+      "boundary": "Dependency supply chain provenance",
+      "invariant": "Dependencies pulled during build/test must pass through an artifact depot with package age cooldown and quarantine blocking.",
+      "evidence_spec": "docs/sandbox-threat-registry.md #40, #41",
+      "verdict": "RESIDUAL_OPEN_DOOR",
+      "implementation_status": "PROPOSED_HARDENING",
+      "details": "OPEN DOOR: Build tools download directly from allowlisted upstream registries (Maven Central, npm). There is no local caching artifact depot, cooldown quarantine (e.g. min package age N days), or real-time malicious package filter implemented in core."
+    }
+  ],
+  "overall_verdict": "CERTIFIED_SHIPPED_CORE_BOUNDARIES_WITH_IDENTIFIED_RESIDUAL_PROPOSALS"
+}

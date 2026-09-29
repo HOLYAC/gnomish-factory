@@ -1,0 +1,172 @@
+{
+  "audit_target": "Gnomish Factory Primitives Reuse Mining for Omnivore",
+  "epoch": 28,
+  "date": "2026-09-29",
+  "transplantable_mechanisms": [
+    {
+      "id": "kill-window-shape-law",
+      "name": "Kill-Window Shape Law",
+      "category": "Crash Consistency & State Recovery",
+      "source_locators": [
+        "domain/src/main/java/com/github/oinsio/gnomish/domain/branch/BranchShape.java:17-103",
+        "domain/src/main/java/com/github/oinsio/gnomish/domain/branch/BranchShapeClassifier.java:34-63",
+        "application/src/main/java/com/github/oinsio/gnomish/app/lease/TrackerShape.java:1-50",
+        "application/src/main/java/com/github/oinsio/gnomish/app/lease/TrackerShapeClassifier.java:1-80",
+        ".claude/rules/crash-consistency.md:1-68",
+        "docs/adr/0003-crash-consistency.md:24-61,158-177"
+      ],
+      "test_locators": [
+        "adapters/github/src/test/groovy/com/github/oinsio/gnomish/adapter/tracker/github/GithubKillWindowSpec.groovy:37-99",
+        "application/src/test/groovy/com/github/oinsio/gnomish/app/lease/TrackerKillWindowShapeSpec.groovy:17-42",
+        "bootstrap/src/test/groovy/com/github/oinsio/gnomish/app/killpoint/TransitionKillPointSpec.groovy:30-100",
+        "test-fixtures/src/main/groovy/com/github/oinsio/gnomish/app/killpoint/KillPointHarness.groovy:1-60"
+      ],
+      "mechanism_description": "Every multi-step transition between durable operations is an enumerated kill window that must freeze into exactly one named shape of a closed, sealed algebraic data type ('the media are the journal'). Recovery reads the world, totally classifies it without throwing, and converges it. The contract is verified by a table-driven kill-point harness that injects crashes after each step and asserts convergence and dual-pass idempotence.",
+      "omnivore_current_primitive": "Atomic file writes via temp-file + replace + directory fsync (in omnivore-master-reconcile), SHA-256 integrity receipts, and linear phase sequences in research_fabric.py. Omnivore lacks a closed algebraic shape classifier for interrupted states and lacks a table-driven kill-point test harness.",
+      "comparison_evaluation": {
+        "stronger_aspects": "Guarantees compile-time exhaustiveness (sealed ADT where unhandled shapes fail the build) and mathematically proves that no reachable intermediate state is unnamable or leads to crash-loops under restart. Automated kill-point tests verify convergence for all transition boundaries.",
+        "weaker_aspects": "Requires all state mutations to be observable in the durable medium (Git refs/commits or tracker records); harder to apply to in-memory streaming pipelines without explicit checkpoint files."
+      },
+      "transplant_proposal": "Transplant a closed 'RunShape' enum into Omnivore's research_fabric.py and execution stages (e.g. INVENTORY_SEALED, GAPS_COMPILED, RECEIPT_COMMITTED, CORRUPT_EVIDENCE), paired with a synthetic kill-point test that terminates execution at each phase boundary and asserts deterministic single-owner convergence."
+    },
+    {
+      "id": "self-fencing-uncertain-authority",
+      "name": "Self-Fencing on Uncertain Authority",
+      "category": "Distributed Concurrency & Lease Fencing",
+      "source_locators": [
+        "application/src/main/java/com/github/oinsio/gnomish/app/take/RevocationCheckingAttemptPersistence.java:75-85,150-195",
+        "application/src/main/java/com/github/oinsio/gnomish/app/lease/InstanceHeartbeat.java:40-47,52-65",
+        "application/src/main/java/com/github/oinsio/gnomish/app/lease/ClaimLossFlag.java:1-60",
+        "application/src/main/java/com/github/oinsio/gnomish/app/lease/LeaseThresholds.java:1-40",
+        "domain/src/main/java/com/github/oinsio/gnomish/domain/branch/ClaimEpoch.java:1-35",
+        "docs/adr/0002-claim-lease-protocol.md:15-56"
+      ],
+      "test_locators": [
+        "application/src/test/groovy/com/github/oinsio/gnomish/app/take/SelfFencingBoundarySpec.groovy:21-100",
+        "application/src/test/groovy/com/github/oinsio/gnomish/app/lease/InstanceHeartbeatFencingSpec.groovy:24-85",
+        "application/src/test/groovy/com/github/oinsio/gnomish/app/ZombieFenceSpec.groovy:1-75"
+      ],
+      "mechanism_description": "Proactive self-fencing before persistence: when an instance's heartbeat is unconfirmed past a lost-detection threshold (strictly earlier than the reaper's reassignment TTL), a ClaimLossFlag enters the 'unconfirmed' state. At the next boundary, before persisting any state, the runner halts and performs a single synchronous re-verification. If confirmed, writes proceed; if revoked or gone, it throws RevocationDetectedException before writing, preventing split-brain zombie writes.",
+      "omnivore_current_primitive": "Static filesystem mutation guards (/usr/local/libexec/claude-worktree-mutation-guard), root authority receipts (ROOT_AUTHORITY_RECEIPT.json, AUTOMATIC_MUTATION_LEASE_RECEIPT.json), and systemd socket listeners. Omnivore relies on reactive external rejection rather than worker self-fencing.",
+      "comparison_evaluation": {
+        "stronger_aspects": "Worker self-throttles and freezes mutations before writing corrupted or stale artifacts when network/heartbeat connectivity decays. Distinguishes transient outages (which cleanly resume after re-verification) from true lease revocation without requiring heavy distributed consensus.",
+        "weaker_aspects": "Relies on cooperative yield points (round/step boundaries); long-running synchronous subprocesses or LLM calls within a single step cannot be interrupted mid-flight by self-fencing alone without OS signals."
+      },
+      "transplant_proposal": "Introduce a lightweight LeaseAuthority lease monitor with a pre-write guard hook in Omnivore's worker/subagent run loop. When lease heartbeat acknowledgment exceeds the lost-detection threshold, subagents pause and ping the lease authority before writing receipts or staging file modifications."
+    },
+    {
+      "id": "recovery-ownership",
+      "name": "Single Recovery Ownership Law",
+      "category": "Crash Consistency & Orchestration",
+      "source_locators": [
+        "domain/src/main/java/com/github/oinsio/gnomish/domain/branch/RecoveryOwner.java:1-31",
+        "domain/src/main/java/com/github/oinsio/gnomish/domain/branch/BranchShape.java:71-86",
+        "application/src/main/java/com/github/oinsio/gnomish/app/lease/TrackerRecoveryOwner.java:1-28",
+        "application/src/main/java/com/github/oinsio/gnomish/app/lease/TrackerShape.java:1-50",
+        "docs/adr/0003-crash-consistency.md:26-42,96-121"
+      ],
+      "test_locators": [
+        "application/src/test/groovy/com/github/oinsio/gnomish/app/lease/TrackerKillWindowShapeSpec.groovy:26-34",
+        "application/src/test/groovy/com/github/oinsio/gnomish/app/lease/ReaperRepairSpec.groovy:1-80",
+        "application/src/test/groovy/com/github/oinsio/gnomish/app/TakeResumeRoutingSpec.groovy:1-90",
+        "bootstrap/src/test/groovy/com/github/oinsio/gnomish/app/killpoint/TransitionKillPointSpec.groovy:52-100"
+      ],
+      "mechanism_description": "Strict organizational invariant: 'Every shape has exactly one recovery owner; two owners for one shape is a bug.' Each classified shape statically maps to a designated recovery owner component (e.g. TAKE_ROUTING, STAGE_ENGINE, TERMINAL_TRANSITION, COMPLETION_FINISH, RECOVERY_BUDGET, REAPER) and a recovery disposition (ROLL_FORWARD, DISCARD, QUARANTINE, TERMINAL), preventing competing recovery loops.",
+      "omnivore_current_primitive": "Monolithic omnibus reconcile scripts (omnivore-master-reconcile) with coarse RED/NONRED status sets and ad-hoc pretool recovery checks. Multiple scripts can attempt overlapping interventions without formal ownership.",
+      "comparison_evaluation": {
+        "stronger_aspects": "Eliminates race conditions between background cleanup daemons and active foreground runners. Explicitly isolates unrecoverable states to a quarantined recovery budget with failure diagnosis, preventing infinite restart/retry loops.",
+        "weaker_aspects": "Requires exhaustive partitioning of all possible error states into discrete components; updating recovery policy requires updating the centralized shape-to-owner table."
+      },
+      "transplant_proposal": "Partition Omnivore's reconciliation logic in omnivore-master-reconcile and Auto Review into a RecoveryOwner mapping per artifact state. For each anomaly (stale lock, missing hash, uncommitted worktree, partial receipt), assign exactly one designated handler (e.g. CLEANUP_JANITOR, ORACLE_RERUN, or OPERATOR_QUARANTINE)."
+    },
+    {
+      "id": "fresh-box-verification",
+      "name": "Fresh-Box Verification with Fail-Closed Self-Check",
+      "category": "Verification & Environment Isolation",
+      "source_locators": [
+        "sandbox/docker/src/main/java/com/github/oinsio/gnomish/sandbox/environment/SelfCheckedEnvironment.java:19-54,76-105",
+        "sandbox/docker/src/main/java/com/github/oinsio/gnomish/sandbox/environment/EnvironmentSelfCheck.java:18-44,95-160",
+        "adapters/src/main/java/com/github/oinsio/gnomish/adapter/check/SandboxCheckEnvironmentSource.java:14-31,62-115",
+        "domain/src/main/java/com/github/oinsio/gnomish/domain/pipeline/VerifyCheck.java:60-70",
+        "openspec/specs/verification/verification-hardening/spec.md:71-78",
+        "docs/sandbox-threat-registry.md:Threat #39, #43"
+      ],
+      "test_locators": [
+        "adapters/src/test/groovy/com/github/oinsio/gnomish/adapter/check/SandboxCheckEnvironmentSourceSpec.groovy:24-85",
+        "sandbox/docker/src/test/groovy/com/github/oinsio/gnomish/sandbox/environment/SelfCheckedEnvironmentSpec.groovy:1-90",
+        "sandbox/docker/src/test/groovy/com/github/oinsio/gnomish/sandbox/environment/EnvironmentSelfCheckSpec.groovy:1-110",
+        "adapters/agent/src/test/groovy/com/github/oinsio/gnomish/adapter/agent/FreshJudgeEnvironmentsSpec.groovy:1-75"
+      ],
+      "mechanism_description": "Verification checks can specify 'verify-in: fresh-box'. Rather than evaluating in the dirty, agent-touched round environment, a clean container is materialized strictly from the factory-pinned attempt commit. Before running verification, it executes mandatory fail-closed internal probes (non-root UID, direct egress blocked, allowlisted egress passing, container runtime/network isolation matching passport). If self-check fails, the box is stopped and preserved for operator forensics rather than destroyed.",
+      "omnivore_current_primitive": "Host subprocess execution using setpriv and environment scrubbing, or in-tree test runs. Lacks ephemeral container materialization pinned to commit SHAs, internal network/user probes, and automatic forensic preservation of failing execution boxes.",
+      "comparison_evaluation": {
+        "stronger_aspects": "Completely prevents out-of-branch residue (planted PATH shims, poisoned caches, background daemons) from faking green verification. In-box self-check catches silent sandbox degradation (e.g. root fallback, egress leakage) before any test code runs.",
+        "weaker_aspects": "Incurs container creation and git clone latency overhead (seconds per verification), which is heavier than Omnivore's lightweight in-process or host subprocess verification."
+      },
+      "transplant_proposal": "Adopt the commit-pinned clean materialization pattern for Omnivore's high-uncertainty oracle courts (court/ and tools/oracle/), running verification in an ephemeral clone with pre-execution environment assertions (clean PATH, non-root, no dirty files), and preserving rejected environments on failure."
+    },
+    {
+      "id": "sandbox-tightening",
+      "name": "Asymmetric Sandbox Tightening Law",
+      "category": "Security Architecture & Policy Boundaries",
+      "source_locators": [
+        "sandbox/core/src/main/java/com/github/oinsio/gnomish/sandbox/SandboxReconciler.java:7-21,24-46",
+        "adapters/src/main/java/com/github/oinsio/gnomish/adapter/pipeline/StructuralValidation.java:40-48,143-167",
+        "sandbox/core/src/main/java/com/github/oinsio/gnomish/sandbox/CapabilityPassport.java:1-50",
+        "sandbox/core/src/main/java/com/github/oinsio/gnomish/sandbox/SandboxNeed.java:1-45",
+        "openspec/specs/pipeline-config/spec.md:326-337",
+        "docs/sandbox-threat-registry.md:Threat #44"
+      ],
+      "test_locators": [
+        "adapters/src/test/groovy/com/github/oinsio/gnomish/adapter/pipeline/StructuralValidationSpec.groovy:120-141",
+        "adapters/src/test/groovy/com/github/oinsio/gnomish/adapter/pipeline/StageDtoSandboxSpec.groovy:70-85",
+        "domain/src/test/groovy/com/github/oinsio/gnomish/domain/pipeline/SandboxSpec.groovy:1-60"
+      ],
+      "mechanism_description": "Asymmetric authority model: repository manifests may only tighten isolation requirements (declaring extra 'needs' or 'requiresFresh: true'); they can never weaken isolation, specify concrete bindings (e.g. 'binding: host'), or relax limits. Naming a binding in repo config is rejected at structural validation as a located ConfigError. Stage execution proceeds only if the operator-provided CapabilityPassport satisfies all declared needs fail-closed.",
+      "omnivore_current_primitive": "Centralized policy files (/etc/claude-code/managed-settings.json, /usr/local/share/claude-policy/managed-settings.json) enforced via wrapper hooks. Lacks a formal capability lattice where target task definitions can declare tighter requirements while strictly forbidding weakening.",
+      "comparison_evaluation": {
+        "stronger_aspects": "Structurally eliminates prompt injection or repo-borne privilege escalation where untrusted repositories attempt to escape containment by declaring permissive executor settings. Enforces a clean separation between operator authority (grants) and task requirements (needs).",
+        "weaker_aspects": "Requires explicit capability modeling (CapabilityPassport and SandboxNeed tokens); cannot express ad-hoc exceptions without operator-level configuration updates."
+      },
+      "transplant_proposal": "Apply asymmetric tightening to Omnivore's task/vault configuration (QUERY.md, ANKETA.md, research fabric specs). Allow task manifests to request stricter verification (e.g. strict_price, required oracle tiers), while structurally rejecting any task-level directive that attempts to bypass mutation guards, disable signing, or relax pretool policies."
+    },
+    {
+      "id": "lifecycle-reaper-convergence",
+      "name": "Lifecycle & Reaper Sweep Convergence",
+      "category": "Orchestration & Garbage Collection",
+      "source_locators": [
+        "application/src/main/java/com/github/oinsio/gnomish/app/lease/Reaper.java:1-120",
+        "application/src/main/java/com/github/oinsio/gnomish/app/lease/TrackerRepair.java:1-60",
+        "sandbox/docker/src/main/java/com/github/oinsio/gnomish/sandbox/environment/SandboxLifecycleDecision.java:1-80",
+        "sandbox/docker/src/main/java/com/github/oinsio/gnomish/sandbox/environment/ObjectOwnershipClassifier.java:1-70",
+        "docs/adr/0003-crash-consistency.md:34-37,57-61"
+      ],
+      "test_locators": [
+        "application/src/test/groovy/com/github/oinsio/gnomish/app/lease/ReaperRepairSpec.groovy:20-95",
+        "application/src/test/groovy/com/github/oinsio/gnomish/app/lease/DeadHeartbeatReapingSpec.groovy:15-80",
+        "sandbox/docker/src/test/groovy/com/github/oinsio/gnomish/sandbox/environment/SandboxLifecycleDecisionBoundarySpec.groovy:1-85"
+      ],
+      "mechanism_description": "Sweep universe rule: writes that admit an object into the sweep universe occur FIRST, writes that remove it occur LAST. The standing background sweeper/reaper enumerates the media directly and repairs any non-steady state without taking locks across network boundaries. Objects carry their ownership role on the wire/label (never inferred from in-memory maps), guaranteeing convergence even after daemon crashes.",
+      "omnivore_current_primitive": "Periodic cron/systemd cleanup scripts and one-off hygiene checks (SYSTEMD_HYGIENE_CURRENT.json). Lacks the strict write-ordering invariant (admission-first, removal-last) that prevents garbage collection race conditions.",
+      "comparison_evaluation": {
+        "stronger_aspects": "Guarantees no orphaned objects or tasks can fall outside the reaper's observation window during crashes between create and tag operations.",
+        "weaker_aspects": "Requires two durable writes for every transition (entry marker + exit cleanup)."
+      },
+      "transplant_proposal": "Apply the sweep-universe write order to Omnivore's temporary run directories ($CLAUDE_JOB_DIR/tmp, /opt/work/omnivore-dev-runs): write an admission manifest before allocating scratch resources, and remove it after cleanup, so an external janitor can safely sweep dead worktrees."
+    }
+  ],
+  "rejected_mechanisms": [
+    {
+      "candidate": "Full Orchestration Shell",
+      "reason": "Omnivore already possesses an artifact-grounded evidence loop (SKILL.md, Research Fabric, and Teamwork control plane). Importing Gnomish's entire multi-agent pipeline and stage-runner architecture would violate Omnivore's lean artifact-only law and introduce substantial architectural bloat."
+    },
+    {
+      "candidate": "GitHub-Comments Lease Substrate",
+      "reason": "Gnomish stores lease heartbeats in GitHub issue comments (ADR 0002). This is significantly weaker than Omnivore's local file locks, systemd sockets, and cryptographically signed SSH commit receipts. GitHub API rate limits, eventual consistency, and network partitions make comment-based leases unsuitable for Omnivore's strict Linux master authority."
+    },
+    {
+      "candidate": "Weakened Authority / Optimistic Tracker Writes",
+      "reason": "Gnomish tolerates unfenced tracker comment writes (labels/comments) with optimistic ETag checks. Omnivore requires strict byte-grounded proofs, sha256 manifests, and immutable root receipts. Degrading Omnivore's authority to optimistic external writes is strictly rejected."
+    }
+  ]
+}

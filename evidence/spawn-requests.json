@@ -1,0 +1,68 @@
+[
+  {
+    "cell_id": "gnomish.claim-pagination-race",
+    "title": "Adversarial audit of GithubClaimLease >100-comment pagination race",
+    "target": "Audit GithubClaimLease.listComments /issues/{n}/comments?per_page=100 and GithubClaimWindow. Test the >100-comment case against current bytes: old comments occupy first page, boundary + two competing claims are beyond it. Determine physically whether two claimers can both return Acquired. Output executable reproducer/court in evidence/COURTS/ and finding in evidence/claim-pagination-race.json.",
+    "falsifier": {
+      "command": "python3 -c 'import json, pathlib; p=pathlib.Path(\"evidence/claim-pagination-race.json\"); assert p.is_file(); d=json.load(open(p)); assert d.get(\"classification\") in [\"CONFIRMED\", \"DISPROVED\"]'",
+      "expected_outcome": "exit 0"
+    },
+    "stratum": "MEASURED",
+    "dependencies": []
+  },
+  {
+    "cell_id": "gnomish.lease-reaper-takeover",
+    "title": "Adversarial audit of lease, reaper, takeover, and epoch consistency",
+    "target": "Attack heartbeat loss, stale claim removal, epoch semantics, kill windows, claim verification, and recovery convergence. Seek double-holder, live-holder reaping, stuck-holder, ABA, stale-cache, and partial-write states. Enumerate durable steps, kill windows, named frozen shapes, recovery owners. Output evidence/lease-reaper-takeover.json and courts in evidence/COURTS/.",
+    "falsifier": {
+      "command": "python3 -c 'import json, pathlib; p=pathlib.Path(\"evidence/lease-reaper-takeover.json\"); assert p.is_file(); d=json.load(open(p)); assert isinstance(d, (list, dict))'",
+      "expected_outcome": "exit 0"
+    },
+    "stratum": "MEASURED",
+    "dependencies": []
+  },
+  {
+    "cell_id": "gnomish.git-split-authority",
+    "title": "Adversarial audit of git/lifecycle split authority and crash consistency",
+    "target": "Attack tracker-vs-branch ordering, non-fast-forward zombie fence, park/finish/abort delivery, push timeouts, remote ambiguity, resume/reconcile. Identify any state where tracker truth and durable branch truth can disagree and what next pickup does. Enumerate durable steps, kill windows, named frozen shapes, recovery owners. Output evidence/git-split-authority.json and courts in evidence/COURTS/.",
+    "falsifier": {
+      "command": "python3 -c 'import json, pathlib; p=pathlib.Path(\"evidence/git-split-authority.json\"); assert p.is_file(); d=json.load(open(p)); assert isinstance(d, (list, dict))'",
+      "expected_outcome": "exit 0"
+    },
+    "stratum": "MEASURED",
+    "dependencies": []
+  },
+  {
+    "cell_id": "gnomish.sandbox-security-boundary",
+    "title": "Adversarial audit of sandbox container/host security boundary",
+    "target": "Inspect actual container/host implementation and tests; attack egress, env/credential exposure, read-only surfaces, host escapes, provider-side tools, cleanup/orphans. Separate implemented guarantees from documented future hardening. Output evidence/sandbox-security-boundary.json and courts in evidence/COURTS/.",
+    "falsifier": {
+      "command": "python3 -c 'import json, pathlib; p=pathlib.Path(\"evidence/sandbox-security-boundary.json\"); assert p.is_file(); d=json.load(open(p)); assert isinstance(d, (list, dict))'",
+      "expected_outcome": "exit 0"
+    },
+    "stratum": "MEASURED",
+    "dependencies": []
+  },
+  {
+    "cell_id": "gnomish.judge-verification",
+    "title": "Adversarial audit of judge and deterministic verification pipeline",
+    "target": "Inspect deterministic checks + judge path, fresh-box semantics, prompt/criteria boundaries, CannotVerify behavior, quorum/independence, and any path where unverified work can advance. Construct at least one falsifier where practical. Output evidence/judge-verification.json and courts in evidence/COURTS/.",
+    "falsifier": {
+      "command": "python3 -c 'import json, pathlib; p=pathlib.Path(\"evidence/judge-verification.json\"); assert p.is_file(); d=json.load(open(p)); assert isinstance(d, (list, dict))'",
+      "expected_outcome": "exit 0"
+    },
+    "stratum": "MEASURED",
+    "dependencies": []
+  },
+  {
+    "cell_id": "gnomish.reuse-mining",
+    "title": "Reuse mining of Gnomish Factory primitives for Omnivore",
+    "target": "Extract only small mechanisms worth transplanting into Omnivore: kill-window shape law, self-fencing on uncertain authority, recovery ownership, fresh-box verification, sandbox tightening. For each, provide exact source/test locator and state why it is stronger or weaker than our current primitive; no wholesale rewrite proposal. Output evidence/reuse-mining.json and matrix in evidence/REUSE_MATRIX.json.",
+    "falsifier": {
+      "command": "python3 -c 'import json, pathlib; p=pathlib.Path(\"evidence/reuse-mining.json\"); assert p.is_file(); d=json.load(open(p)); assert isinstance(d, (list, dict))'",
+      "expected_outcome": "exit 0"
+    },
+    "stratum": "MEASURED",
+    "dependencies": []
+  }
+]

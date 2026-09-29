@@ -1,0 +1,252 @@
+{
+  "audit_target": "gnomish.lease-reaper-takeover",
+  "generated_at": "2026-09-29T18:05:00Z",
+  "audit_version": "1.0.0",
+  "stratum": "MEASURED",
+  "executive_summary": {
+    "verdict": "VULNERABILITIES_IDENTIFIED",
+    "critical_findings": 2,
+    "high_findings": 3,
+    "medium_findings": 1,
+    "core_mechanisms_audited": [
+      "Heartbeat loss & self-fencing threshold (lostDetection < TTL)",
+      "Stale claim removal & level-triggered reaper convergence",
+      "ClaimEpoch monotonicity & writer provenance",
+      "Git push fence vs local commit durability (BestEffortPush)",
+      "GitHub comment truncation (>100 comments pagination failure)",
+      "Zombie fencing defeat & divergent local execution loops"
+    ]
+  },
+  "subsystem_analyses": {
+    "heartbeat_and_self_fencing": {
+      "components": [
+        "com.github.oinsio.gnomish.app.lease.InstanceHeartbeat",
+        "com.github.oinsio.gnomish.app.lease.BeatTiming",
+        "com.github.oinsio.gnomish.adapter.tracker.github.GithubHeartbeat"
+      ],
+      "design_model": "DynamoDB Lock Client pattern with monotonic local clock observation. Heartbeat runs on a virtual thread executing in-place PATCH on the issue claim comment. The self-fencing threshold freezes the worker when consecutive heartbeat losses exceed lostDetection window, strictly before remote TTL expiration.",
+      "attack_surfaces_audited": [
+        {
+          "attack": "Premature live-holder reaping due to clock skew",
+          "result": "IMMUNE_BY_DESIGN",
+          "mechanism": "StalenessMemory uses observer-local monotonic time (Duration.ofMinutes(15)). No synchronized wall clock is used. A freshly started instance cannot declare an existing claim stale before its own TTL has elapsed since first observation."
+        },
+        {
+          "attack": "Transient network outage causing false claim loss",
+          "result": "HANDLED_GRACEFULLY",
+          "mechanism": "GithubHeartbeat distinguishes HTTP 404 (ClaimGone - definitive theft/reaping) from HTTP 5xx/IOException (TransportFailure). Only consecutive failures exceeding lostDetection freeze the worker."
+        },
+        {
+          "attack": "Comment count exceeding 100 blinding heartbeat resolveClaim",
+          "result": "VULNERABLE (HIGH)",
+          "finding_id": "VULN-COMMENT-TRUNCATION-HEARTBEAT-RESOLVE",
+          "details": "GithubHeartbeat.resolveClaim executes GET /issues/{num}/comments?per_page=100 without pagination. If the issue has >100 comments and the active claim was posted at index >= 101, resolveClaim returns Optional.empty(), causing GithubHeartbeat to return BeatResult.Lost(ClaimGone). A healthy live worker immediately self-fences due to pagination truncation."
+        }
+      ]
+    },
+    "stale_claim_removal_and_reaper": {
+      "components": [
+        "com.github.oinsio.gnomish.app.lease.Reaper",
+        "com.github.oinsio.gnomish.app.lease.StandingReaper",
+        "com.github.oinsio.gnomish.app.lease.StalenessMemory",
+        "com.github.oinsio.gnomish.adapter.tracker.github.GithubStaleClaimRemoval"
+      ],
+      "design_model": "Level-triggered sweeper that inspects the union of listOpen and listReady(100). Evicts stale claims via atomic version-guarded delete (RemoveStaleClaimResult.Removed vs Mismatch).",
+      "attack_surfaces_audited": [
+        {
+          "attack": "Reaper race against live heartbeat update (ABA problem)",
+          "result": "MITIGATED_ON_TRACKER",
+          "mechanism": "GithubStaleClaimRemoval performs reReadThread before deleting comment. If comment updated_at or id changes, removal returns Mismatch and aborts deletion."
+        },
+        {
+          "attack": "Double-holder race on stale claim reclaim",
+          "result": "CONTROLLED",
+          "mechanism": "Once Reaper deletes comment and strips working label, task enters Ready. Next claimant must successfully post claim comment and verify it is the earliest winner in GithubClaimWindow."
+        },
+        {
+          "attack": "Comment count exceeding 100 blinding reaper reReadThread",
+          "result": "VULNERABLE (HIGH)",
+          "finding_id": "VULN-COMMENT-TRUNCATION-STALE-REMOVAL",
+          "details": "GithubStaleClaimRemoval.reReadThread queries /comments?per_page=100. If newer activity pushed the claim or boundary beyond comment 100, the reaper operates on obsolete page 1 data."
+        }
+      ]
+    },
+    "claim_epoch_monotonicity": {
+      "components": [
+        "com.github.oinsio.gnomish.domain.branch.ClaimEpoch",
+        "com.github.oinsio.gnomish.adapter.tracker.github.GithubClaimComment"
+      ],
+      "design_model": "Opaque 64-bit integer derived from tracker comment ID. Stamped into Git commit trailers and tracker state markers as writer provenance.",
+      "findings": {
+        "fence_role": "Provenance stamp ONLY. ClaimEpoch is NEVER evaluated as a read-side admission filter or gate. It names the tenure that authored a commit.",
+        "invariance": "Because readers never reject older epochs upon checkout or resume, ClaimEpoch alone does not fence writers. Fencing is delegated entirely to Git push rejection and tracker round-boundary checks."
+      }
+    },
+    "git_push_fence_vs_local_durability": {
+      "components": [
+        "com.github.oinsio.gnomish.adapter.git.BestEffortPush",
+        "com.github.oinsio.gnomish.adapter.git.GitAttemptPersistence",
+        "com.github.oinsio.gnomish.app.take.RevocationCheckingAttemptPersistence",
+        "com.github.oinsio.gnomish.app.ZombieFenceSpec"
+      ],
+      "design_model": "ADR 0002 claims non-fast-forward push rejection serves as a hard fence against zombie workers. In reality, GitAttemptPersistence treats local git commit as the durability boundary, and BestEffortPush deliberately catches non-fast-forward push rejections and swallows them with a warning.",
+      "attack_surfaces_audited": [
+        {
+          "attack": "Local execution loop continues after remote push rejection",
+          "result": "VULNERABLE (CRITICAL)",
+          "finding_id": "VULN-GIT-FENCE-LOCAL-EXECUTION-DIVERGENCE",
+          "details": "BestEffortPush.pushBestEffort catches GitCommandResult when push fails (exit code != 0). It calls PushOutcome.describe and logs WARN OperatorEvent.PUSH_FAILED. It NEVER throws an exception. Therefore, GitAttemptPersistence.persist succeeds! The local worker believes round persistence succeeded and proceeds to RevocationCheckingAttemptPersistence."
+        },
+        {
+          "attack": "Zombie fence verification in ZombieFenceSpec is dependent on tracker stub",
+          "result": "CONFIRMED_TEST_ARTIFACT",
+          "details": "ZombieFenceSpec asserts that a zombie halts on revocation. However, inspection of ZombieFenceSpec demonstrates that the Git push rejection did not halt the execution; rather, the stubbed Tracker.fetchTask explicitly returned Working(NEW_HOLDER), triggering RevocationCheckingAttemptPersistence. Revocation check halts ONLY if the tracker reports revocation."
+        }
+      ]
+    },
+    "truncation_defeat_of_revocation_fence": {
+      "components": [
+        "com.github.oinsio.gnomish.adapter.tracker.github.GithubTaskFetcher",
+        "com.github.oinsio.gnomish.adapter.tracker.github.GithubOpenQuery",
+        "com.github.oinsio.gnomish.app.take.RevocationCheckingAttemptPersistence"
+      ],
+      "design_model": "When a worker finishes a round, RevocationCheckingAttemptPersistence calls tracker.fetchTask(ref). If the state is Working(holder) and holder == ourInstanceId, execution continues.",
+      "attack_surfaces_audited": [
+        {
+          "attack": "Full fence bypass via comment truncation (>100 comments)",
+          "result": "VULNERABLE (CRITICAL)",
+          "finding_id": "VULN-COMMENT-TRUNCATION-TASK-FETCHER-REVOCATION-BYPASS",
+          "details": "When an issue exceeds 100 comments, GithubTaskFetcher.fetchTask fetches only comments 1..100. If instance A was reaped and instance B claimed the task at comment #102: when zombie instance A calls fetchTask, it receives page 1 (comments 1..100) where instance A's claim is the latest visible claim. fetchTask returns Working('instance-A')! RevocationCheckingAttemptPersistence checks holder.equals(instanceId.value()) which evaluates to TRUE! Consequently: (1) BestEffortPush swallowed the git non-fast-forward rejection, and (2) RevocationCheckingAttemptPersistence passed because fetchTask returned stale holder A. Zombie instance A continues executing subsequent rounds locally, producing diverging local commits."
+        }
+      ]
+    }
+  },
+  "tracker_state_space_and_shapes": {
+    "total_shapes": 10,
+    "shapes": [
+      {
+        "shape": "Ready",
+        "description": "Ready label present, no active claim footprint. Available for claim.",
+        "recovery_owner": "QUEUE",
+        "transition_trigger": "TakeCommand / ClaimLease"
+      },
+      {
+        "shape": "Claimed",
+        "description": "Working label present, live claim comment with active heartbeat.",
+        "recovery_owner": "HOLDER",
+        "transition_trigger": "Heartbeat / Round Persist"
+      },
+      {
+        "shape": "Parked",
+        "description": "Parked label present, terminal or quarantined state (e.g. INFRA failure, abort threshold).",
+        "recovery_owner": "HUMAN",
+        "transition_trigger": "Operator intervention"
+      },
+      {
+        "shape": "Finished",
+        "description": "Finished label present, pipeline completed successfully.",
+        "recovery_owner": "NONE",
+        "transition_trigger": "Delivered"
+      },
+      {
+        "shape": "Returned",
+        "description": "Task explicitly released back to pool with returned state marker.",
+        "recovery_owner": "QUEUE",
+        "transition_trigger": "Ready sweep"
+      },
+      {
+        "shape": "Revoked",
+        "description": "Claim revoked by operator or supervisory controller.",
+        "recovery_owner": "REAPER",
+        "transition_trigger": "Sweep / Cleanup"
+      },
+      {
+        "shape": "ClaimPending",
+        "description": "Working label applied, but claim comment write not yet observed or index lagging.",
+        "recovery_owner": "REAPER",
+        "transition_trigger": "IndexRepair / TTL expiry"
+      },
+      {
+        "shape": "ClaimAbandoned",
+        "description": "Claim released after failed resource resolution (e.g. git base unreachable); working label remains temporarily.",
+        "recovery_owner": "REAPER",
+        "transition_trigger": "Reaper sweep restores Ready"
+      },
+      {
+        "shape": "IndexLagging",
+        "description": "Labels and comment markers temporarily inconsistent due to asynchronous GitHub search/eventual consistency.",
+        "recovery_owner": "REAPER",
+        "transition_trigger": "IndexRepair convergence"
+      },
+      {
+        "shape": "Foreign",
+        "description": "Issue labels or comments outside Gnomish namespace or unrecognized format.",
+        "recovery_owner": "NONE",
+        "transition_trigger": "Ignored"
+      }
+    ]
+  },
+  "kill_windows_and_recovery_matrix": [
+    {
+      "window_id": "KW-01",
+      "name": "Tracker claim to task-creation commit",
+      "boundary": "After tracker claim comment posted, before git STARTED commit",
+      "media_state": {
+        "tracker": "Claimed",
+        "branch": "no-branch"
+      },
+      "recovery_owner": "REAPER",
+      "convergence": "Reaper observes unchanged claim for TTL duration, deletes claim comment, resets label to Ready/no-branch."
+    },
+    {
+      "window_id": "KW-02",
+      "name": "Failed base refresh release",
+      "boundary": "After tracker claim, git origin unreachable during base resolution",
+      "media_state": {
+        "tracker": "ClaimAbandoned",
+        "branch": "no-branch"
+      },
+      "recovery_owner": "REAPER",
+      "convergence": "FailedBaseRefreshRelease releases claim comment. Reaper detects working label with absent claim, resets label to Ready."
+    },
+    {
+      "window_id": "KW-03",
+      "name": "Post-commit to push round",
+      "boundary": "Local git commit created, before BestEffortPush completes",
+      "media_state": {
+        "tracker": "Claimed",
+        "branch": "unpushed-local-head"
+      },
+      "recovery_owner": "HOLDER / REAPER",
+      "convergence": "If holder lives, next round or retry pushes commit. If holder dies, reaper restores Ready; next claimant resumes from branch if pushed, or restarts round."
+    },
+    {
+      "window_id": "KW-04",
+      "name": "Post-persist revocation check",
+      "boundary": "After BestEffortPush returns, during tracker.fetchTask check",
+      "media_state": {
+        "tracker": "Claimed (superseded on origin)",
+        "branch": "divergent-local-commit"
+      },
+      "recovery_owner": "HOLDER (self-fence via RevocationDetectedException)",
+      "vulnerability_note": "Defeated if issue has >100 comments: fetchTask returns stale holder, worker fails to self-fence."
+    }
+  ],
+  "remediation_recommendations": [
+    {
+      "priority": "P0",
+      "target": "adapters/github (all comment query call-sites)",
+      "recommendation": "Implement paginated comment fetching or fetch issue comments in reverse chronological order (direction=desc if supported, or follow Link headers) so the newest comments/claim markers are never truncated."
+    },
+    {
+      "priority": "P0",
+      "target": "adapters/git/BestEffortPush.java & GitAttemptPersistence.java",
+      "recommendation": "Do not treat non-fast-forward push failure as a non-fatal best-effort condition. If a push is rejected with non-fast-forward, throw a PushRejectedException immediately to halt local round progression, rather than relying exclusively on tracker checks."
+    },
+    {
+      "priority": "P1",
+      "target": "adapters/github/GithubIndexRepair.java",
+      "recommendation": "Ensure IndexRepair scans all pages of comments before deciding latestBoundary is null, preventing destructive rollback of ABORT/FINISH boundaries."
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "classification": "CONFIRMED",
+  "vulnerability": "GithubClaimLease >100-comment pagination race",
+  "component": "com.github.oinsio.gnomish.adapter.tracker.github.GithubClaimLease",
+  "endpoint": "/repos/{owner}/{repo}/issues/{n}/comments?per_page=100",
+  "boundary_beyond_page": true,
+  "claims_beyond_page": true,
+  "dual_acquired": true,
+  "mechanism": "GithubClaimLease.listComments calls /repos/{owner}/{repo}/issues/{n}/comments?per_page=100 without handling pagination or Link headers. When an issue has >100 comments, the first 100 comments (page 1) fill the response. A boundary marker (abort/finish/park/stale_claim_removed) at index >= 100 and subsequent competing claims at index >= 100 (page 2+) are never seen by listComments. In GithubClaimWindow.of(), the comments parsed from page 1 contain none of the post-boundary claims or the boundary itself. For both racing claimers A and B whose comments are on page 2+, window.winnerAgainst(ownCommentId) finds no opposing claim in the window (and does not even see ownCommentId). winnerAgainst returns Optional.empty(), so neither claimer detects that it was beaten. Both claimers fall back to winnerId = ownCommentId and return ClaimResult.Acquired(new ClaimEpoch(ownCommentId)). Consequently, both claimers simultaneously conclude they acquired the lease on the same issue.",
+  "impact": "CRITICAL: Mutual exclusion failure on tasks with >100 comments. Multiple factory workers concurrently execute the same task (split-brain execution), corrupting task state, racing on task branches, and issuing duplicate/conflicting actions.",
+  "court": "evidence/COURTS/ClaimPaginationRaceCourt.groovy"
+}

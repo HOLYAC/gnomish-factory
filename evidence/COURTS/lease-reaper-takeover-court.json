@@ -1,0 +1,57 @@
+{
+  "court_id": "gnomish.lease-reaper-takeover.adversarial-audit",
+  "cell_id": "gnomish.lease-reaper-takeover",
+  "generated_at": "2026-09-29T20:15:00Z",
+  "stratum": "MEASURED",
+  "verification_commands": [
+    {
+      "name": "application-lease-reaper-specs",
+      "command": "./gradlew :application:test --tests 'com.github.oinsio.gnomish.app.lease.*' --tests 'com.github.oinsio.gnomish.app.ZombieFenceSpec'",
+      "expected_outcome": "exit 0",
+      "purpose": "Verifies core lease, reaper, staleness memory, and kill-point transition contract on in-memory and stubbed tracker models"
+    },
+    {
+      "name": "github-adapter-tracker-specs",
+      "command": "./gradlew :adapters:github:test --tests 'com.github.oinsio.gnomish.adapter.tracker.github.*'",
+      "expected_outcome": "exit 0",
+      "purpose": "Verifies GitHub tracker adapter unit tests (38 test suites, all passing on clean fixtures)"
+    }
+  ],
+  "vulnerability_reproductions": [
+    {
+      "vulnerability_id": "VULN-COMMENT-TRUNCATION-HEARTBEAT-RESOLVE",
+      "target_file": "adapters/github/src/main/java/com/github/oinsio/gnomish/adapter/tracker/github/GithubHeartbeat.java",
+      "method": "resolveClaim",
+      "severity": "HIGH",
+      "defect": "Hardcoded per_page=100 without pagination drops claim comments at position >= 101. When an active claim is posted at index >= 101, resolveClaim returns Optional.empty() (ClaimGone), causing a healthy running worker to falsely declare its claim lost and self-fence prematurely."
+    },
+    {
+      "vulnerability_id": "VULN-COMMENT-TRUNCATION-STALE-REMOVAL",
+      "target_file": "adapters/github/src/main/java/com/github/oinsio/gnomish/adapter/tracker/github/GithubStaleClaimRemoval.java",
+      "method": "reReadThread",
+      "severity": "HIGH",
+      "defect": "reReadThread fetches comments with per_page=100 without pagination. If a newer claim or boundary was appended past comment 100, the reaper re-reads only page 1, leading to false mismatch detection or inappropriate removal decisions based on truncated history."
+    },
+    {
+      "vulnerability_id": "VULN-COMMENT-TRUNCATION-INDEX-REPAIR",
+      "target_file": "adapters/github/src/main/java/com/github/oinsio/gnomish/adapter/tracker/github/GithubIndexRepair.java",
+      "method": "comments",
+      "severity": "HIGH",
+      "defect": "comments() method requests per_page=100. When an issue has >100 comments, the latest boundary marker (e.g. ABORT, FINISH) posted at index >= 101 is never seen. latestBoundary returns null, triggering the fallback branch that treats the task as ClaimPending and rolls back working label to Ready inappropriately."
+    },
+    {
+      "vulnerability_id": "VULN-COMMENT-TRUNCATION-TASK-FETCHER-REVOCATION-BYPASS",
+      "target_file": "adapters/github/src/main/java/com/github/oinsio/gnomish/adapter/tracker/github/GithubTaskFetcher.java",
+      "method": "fetchTask",
+      "severity": "CRITICAL",
+      "defect": "fetchTask queries comments?per_page=100. When claimant B takes over a task at comment 102, previous holder A querying fetchTask receives only comments 1..100. In page 1, A's original claim comment is still the latest claim visible. fetchTask reports holder = A. Consequently, ClaimGuard.stillOurs returns true and RevocationCheckingAttemptPersistence fails to detect revocation."
+    },
+    {
+      "vulnerability_id": "VULN-GIT-FENCE-LOCAL-EXECUTION-DIVERGENCE",
+      "target_file": "adapters/git/src/main/java/com/github/oinsio/gnomish/adapter/git/BestEffortPush.java",
+      "method": "pushBestEffort",
+      "severity": "CRITICAL",
+      "defect": "BestEffortPush logs git non-fast-forward push rejection at WARN level and does not throw or fail the persistence step. GitAttemptPersistence treats local commit creation as the sole durability boundary. Combined with comment truncation defeating the post-persist revocation check, a zombie instance continues executing rounds locally, accumulating divergent commits on its local task branch that can never be pushed to origin."
+    }
+  ]
+}

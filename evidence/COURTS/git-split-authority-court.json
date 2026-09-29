@@ -1,0 +1,44 @@
+{
+  "court": "git-split-authority-adversarial-audit",
+  "cell": "gnomish.git-split-authority",
+  "created_at": "2026-09-29T12:00:00Z",
+  "evaluated_commit": "7727344232d339867559ee968b4f695bf99f6a85",
+  "judges": [
+    {
+      "name": "Non-Fast-Forward Zombie Fence Judge",
+      "invariant": "A zombie instance whose lease expired can never overwrite branch progress made by a subsequent holder.",
+      "evidence_spec": "com.github.oinsio.gnomish.app.ZombieFenceSpec",
+      "verdict": "PASS",
+      "details": "Git's native non-fast-forward push rejection stops the zombie writer. Compile-time NoForcePushGuardSpec ensures --force is never used."
+    },
+    {
+      "name": "Total Shape Classification and Single Owner Judge",
+      "invariant": "BranchShape and TrackerShape are closed sets of 10 sealed records where every shape maps to exactly one recovery owner.",
+      "evidence_spec": "com.github.oinsio.gnomish.domain.branch.BranchShapeSpec",
+      "verdict": "PASS",
+      "details": "Every frozen intermediate state is deterministically routed without improvising or crash-looping."
+    },
+    {
+      "name": "Intent-Effect-Receipt Park Delivery Judge",
+      "invariant": "Terminal park commits pending marker to branch before tracker mutation, and confirms with receipt after.",
+      "evidence_spec": "com.github.oinsio.gnomish.app.TakeLoadedBranchRoutesSpec",
+      "verdict": "PASS",
+      "details": "Next claimant detects isOrphanedPark, probes tracker idempotently via fenceParkDelivery, delivers if absent, and commits confirmTerminalWrite without running engine."
+    },
+    {
+      "name": "Claim Epoch Provenance Judge",
+      "invariant": "Claim epoch in branch commit is writer provenance only and does not quarantine reclaims.",
+      "evidence_spec": "com.github.oinsio.gnomish.app.killpoint.ReclaimKillPoints",
+      "verdict": "PASS",
+      "details": "Tested with RECLAIM_EPOCH 9000L; reclaiming instance classifies tips stamped by ended tenures by content alone and converges without quarantine."
+    },
+    {
+      "name": "Reopened Finished Task Guard Judge",
+      "invariant": "Delivered branch cannot be corrupted by manual reopening of finished tracker issue.",
+      "evidence_spec": "com.github.oinsio.gnomish.app.TakeDispositionSpec",
+      "verdict": "PASS",
+      "details": "TakeDisposition intercepts TrackerTaskState.Ready when finished() is true, sends tracker.declineFinished, and refuses task."
+    }
+  ],
+  "overall_verdict": "CERTIFIED_CRASH_CONSISTENT"
+}

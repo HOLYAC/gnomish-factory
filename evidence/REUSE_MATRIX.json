@@ -1,0 +1,81 @@
+{
+  "matrix_title": "Gnomish Factory Primitives vs Omnivore Primitives Reuse Matrix",
+  "version": "1.1",
+  "generated_date": "2026-09-29",
+  "transplant_matrix": [
+    {
+      "mechanism": "Kill-Window Shape Law",
+      "gnomish_source": "domain/src/main/java/com/github/oinsio/gnomish/domain/branch/BranchShape.java:17",
+      "gnomish_test": "bootstrap/src/test/groovy/com/github/oinsio/gnomish/app/killpoint/TransitionKillPointSpec.groovy:52",
+      "omnivore_primitive": "Atomic write + fsync in omnivore-master-reconcile, linear phase runner in research_fabric.py",
+      "status_comparison": "Stronger in formal consistency & testability; weaker in streaming overhead",
+      "primary_advantage": "Proves total crash-consistency with compile-time closed shapes and double-recovery idempotence tests",
+      "transplant_risk": "Low (small Python enum + recovery dispatcher)",
+      "recommendation": "Adopt in Research Fabric phase transitions"
+    },
+    {
+      "mechanism": "Self-Fencing on Uncertain Authority",
+      "gnomish_source": "application/src/main/java/com/github/oinsio/gnomish/app/take/RevocationCheckingAttemptPersistence.java:175",
+      "gnomish_test": "application/src/test/groovy/com/github/oinsio/gnomish/app/take/SelfFencingBoundarySpec.groovy:21",
+      "omnivore_primitive": "External mutation guards (/usr/local/libexec/claude-worktree-mutation-guard) and root authority leases",
+      "status_comparison": "Stronger in proactive partition safety; weaker in mid-step interruption",
+      "primary_advantage": "Self-freezes mutations before writing when lease heartbeats decay, preventing split-brain writes",
+      "transplant_risk": "Low (pre-write lease check hook)",
+      "recommendation": "Adopt in long-running toolbelt and subagent worker loops"
+    },
+    {
+      "mechanism": "Single Recovery Ownership Law",
+      "gnomish_source": "domain/src/main/java/com/github/oinsio/gnomish/domain/branch/RecoveryOwner.java:12",
+      "gnomish_test": "application/src/test/groovy/com/github/oinsio/gnomish/app/lease/TrackerKillWindowShapeSpec.groovy:26",
+      "omnivore_primitive": "Monolithic omnivore-master-reconcile status check with coarse RED/NONRED buckets",
+      "status_comparison": "Stronger in conflict elimination and bounded quarantine; weaker in setup verbosity",
+      "primary_advantage": "Guarantees exactly one component converges each interrupted shape; eliminates background vs foreground recovery races",
+      "transplant_risk": "Low (mapping table from artifact state to handler)",
+      "recommendation": "Adopt in Omnivore reconcile and Auto Review error dispatch"
+    },
+    {
+      "mechanism": "Fresh-Box Verification",
+      "gnomish_source": "sandbox/docker/src/main/java/com/github/oinsio/gnomish/sandbox/environment/SelfCheckedEnvironment.java:19",
+      "gnomish_test": "adapters/src/test/groovy/com/github/oinsio/gnomish/adapter/check/SandboxCheckEnvironmentSourceSpec.groovy:24",
+      "omnivore_primitive": "Host subprocess execution with setpriv drops or in-tree test scripts",
+      "status_comparison": "Stronger in anti-tampering and forensic preservation; weaker in spin-up latency",
+      "primary_advantage": "Proves branch self-sufficiency from commit pin; executes in-box egress/uid self-check; preserves rejected box for forensics",
+      "transplant_risk": "Medium (requires ephemeral container/clone infrastructure)",
+      "recommendation": "Adopt commit-pin clean environment pattern for oracle courts"
+    },
+    {
+      "mechanism": "Sandbox Tightening (Asymmetric Law)",
+      "gnomish_source": "sandbox/core/src/main/java/com/github/oinsio/gnomish/sandbox/SandboxReconciler.java:7",
+      "gnomish_test": "adapters/src/test/groovy/com/github/oinsio/gnomish/adapter/pipeline/StructuralValidationSpec.groovy:120",
+      "omnivore_primitive": "Managed policy settings (/etc/claude-code/managed-settings.json) and hook-based pretool enforcement",
+      "status_comparison": "Stronger in privilege escalation prevention; weaker in ad-hoc operator overrides",
+      "primary_advantage": "Asymmetric rule ensures untrusted task configs can only tighten requirements, never weaken bindings or limits",
+      "transplant_risk": "Low (validation rule on task manifests)",
+      "recommendation": "Adopt in task/vault input validation to forbid disabling security controls"
+    },
+    {
+      "mechanism": "Lifecycle & Reaper Sweep Convergence",
+      "gnomish_source": "application/src/main/java/com/github/oinsio/gnomish/app/lease/Reaper.java:1",
+      "gnomish_test": "application/src/test/groovy/com/github/oinsio/gnomish/app/lease/ReaperRepairSpec.groovy:20",
+      "omnivore_primitive": "Periodic cron/systemd cleanup scripts and one-off hygiene checks (SYSTEMD_HYGIENE_CURRENT.json)",
+      "status_comparison": "Stronger in race elimination during garbage collection; weaker in write count",
+      "primary_advantage": "Admission-first, removal-last ordering ensures no object falls outside sweeper universe during crash",
+      "transplant_risk": "Low (ordering convention for temporary workspaces)",
+      "recommendation": "Adopt in run-directory allocation and scratch cleanup"
+    }
+  ],
+  "rejected_candidates": [
+    {
+      "candidate": "Full Orchestration Shell",
+      "reason": "Overkill for Omnivore; would introduce complex multi-agent runner infrastructure that conflicts with native Teamwork and Research Fabric."
+    },
+    {
+      "candidate": "GitHub-Comments Lease Substrate",
+      "reason": "Inferior to Omnivore's local file locks and cryptographic receipts; rate-limited and subject to external provider downtime."
+    },
+    {
+      "candidate": "Optimistic Unfenced Tracker Writes",
+      "reason": "Weaker than Omnivore's strict signed-commit and SHA-256 evidence gates; violates byte-grounded proof principles."
+    }
+  ]
+}

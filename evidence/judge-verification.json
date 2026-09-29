@@ -1,0 +1,106 @@
+{
+  "classification": "CONFIRMED",
+  "audit_title": "Adversarial audit of judge and deterministic verification pipeline",
+  "target": "Inspect deterministic checks + judge path, fresh-box semantics, prompt/criteria boundaries, CannotVerify behavior, quorum/independence, and any path where unverified work can advance.",
+  "evaluated_commit": "7727344232d339867559ee968b4f695bf99f6a85",
+  "evaluated_at": "2026-09-29T20:30:00Z",
+  "summary": {
+    "status": "VULNERABILITIES_CONFIRMED",
+    "primary_findings": "Confirmed prompt/verdict extraction desynchronization in JudgeVerdictExtractor allowing pass smuggling; confirmed policy/argv collapse in AgentInvocationOptions.renderForJudge omitting --allowedTools on empty read-only intersections; confirmed shared container instance reuse in FreshJudgeEnvironments.",
+    "severity": "HIGH"
+  },
+  "findings": [
+    {
+      "id": "GNOMISH-JUDGE-01",
+      "name": "Judge Tool-Permission Argv Collapse on Empty Read-Only Intersection",
+      "component": "com.github.oinsio.gnomish.adapter.agent.AgentInvocationOptions",
+      "method": "renderForJudge",
+      "severity": "HIGH",
+      "classification": "CONFIRMED_ARGV_GAP",
+      "runtime_exploitability": "UNVERIFIED",
+      "mechanism": "AgentInvocationOptions.renderForJudge filters manifest allowedTools against JUDGE_READ_ONLY_TOOLS (['Read', 'Grep', 'Glob']). When the intersection is empty (e.g. manifest specifies ['Write', 'Bash'], or an empty list []), effectiveJudgeAllowedTools returns an empty list. addToolListFlag omits the --allowedTools flag entirely when the list is empty. The resulting argv contains only ['--model', '<model>'] without any --allowedTools restriction. Note: live nested provider invocation is restricted by Teamwork anti-recursion harness; whether print mode defaults to unprompted write execution or rejects tool calls remains unverified at runtime. However, the policy/argv collapse is physically proven.",
+      "evidence": {
+        "court_test": "JudgeVerificationCourt: CONFIRMED: renderForJudge completely omits --allowedTools when manifest requested only write/bash tools",
+        "argv_empty_intersection": ["--model", "claude-3-opus"],
+        "argv_normal_read_only": ["--model", "claude-3-opus", "--allowedTools", "Read,Grep,Glob"]
+      }
+    },
+    {
+      "id": "GNOMISH-JUDGE-02",
+      "name": "Shared Container Instance in FreshJudgeEnvironments",
+      "component": "com.github.oinsio.gnomish.adapter.agent.FreshJudgeEnvironments",
+      "method": "environmentFor",
+      "severity": "MEDIUM",
+      "classification": "CONFIRMED_SHARED_INSTANCE",
+      "risk_condition": "CONDITIONAL (requires write-capable tool execution under GNOMISH-JUDGE-01)",
+      "mechanism": "FreshJudgeEnvironments runs judge votes in a fresh container materialized from the attempt commit SHA. Lines 56-65 cache and reuse the exact same container across all votes for that attempt: 'if (current != null && sha.equals(currentSha)) return current;'. The implementation justified this by assuming judges are strictly read-only. If GNOMISH-JUDGE-01 allows mutations, earlier votes alter state for later votes, undermining voter independence.",
+      "evidence": {
+        "court_test": "JudgeVerificationCourt: CONFIRMED: FreshJudgeEnvironments shares mutable container instance across attempt votes"
+      }
+    },
+    {
+      "id": "GNOMISH-JUDGE-03",
+      "name": "JudgeVerdictExtractor Pass Smuggling and First-Fence Desynchronization",
+      "component": "com.github.oinsio.gnomish.adapter.agent.JudgeVerdictExtractor",
+      "method": "extract",
+      "severity": "HIGH",
+      "classification": "CONFIRMED_VULNERABILITY",
+      "runtime_exploitability": "CONFIRMED",
+      "mechanism": "JudgePromptBuilder instructs the model: 'End your final message with a JSON object of the form {\"passed\": true|false, \"findings\": [...]}'. In contrast, JudgeVerdictExtractor uses FENCE.matcher(text).find() to match the FIRST markdown code fence and scans for the FIRST balanced '{...}' block from text start. If the judge model includes preliminary discussion, quotes previous mock configurations, or cites passing test examples containing {\"passed\": true} before its terminal verdict, the extractor parses the preliminary snippet and returns Verdict.Pass(), completely ignoring a terminal {\"passed\": false, ...} evaluation. Unverified and failing work thus advances.",
+      "evidence": {
+        "court_test": "JudgeVerificationCourt: CONFIRMED: JudgeVerdictExtractor pass smuggling when preliminary JSON fence precedes failing verdict"
+      }
+    },
+    {
+      "id": "GNOMISH-JUDGE-04",
+      "name": "Non-JSON Code Fence Causes Premature CannotVerify Taint",
+      "component": "com.github.oinsio.gnomish.adapter.agent.JudgeVerdictExtractor",
+      "method": "extract",
+      "severity": "MEDIUM",
+      "classification": "CONFIRMED_VULNERABILITY",
+      "runtime_exploitability": "CONFIRMED",
+      "mechanism": "When the judge model quotes Java, C, or Python code with curly braces in an illustrative fence prior to its JSON verdict fence, JudgeVerdictExtractor extracts that first code fence and attempts to parse it as JSON. Jackson fails with malformed JSON, and the extractor returns Verdict.CannotVerify. In JudgeVoting, a single CannotVerify vote immediately short-circuits the majority voting loop, discarding all other votes and returning CannotVerify for the entire check. In StageAttemptLoop, CannotVerify records an unburned round, causing human escalation without consuming stage attempt budgets.",
+      "evidence": {
+        "court_test": "JudgeVerificationCourt: CONFIRMED: JudgeVerdictExtractor yields CannotVerify when non-JSON code fence precedes verdict"
+      }
+    },
+    {
+      "id": "GNOMISH-JUDGE-05",
+      "name": "Vacuous Pass on Empty Verification Check List",
+      "component": "com.github.oinsio.gnomish.domain.engine.RoundExecution",
+      "method": "overallVerdict",
+      "severity": "LOW",
+      "classification": "ARCHITECTURAL_BEHAVIOR",
+      "mechanism": "In RoundExecution.overallVerdict, if verification.results().isEmpty(), it returns 'new Verdict.Pass()'. If a stage configures an empty verify list (verify: []), or if all checks are omitted, the stage passes vacuously without executing any checks or verifying any artifacts.",
+      "evidence": {
+        "source_reference": "RoundExecution.java:220-224"
+      }
+    }
+  ],
+  "verification_pipeline_properties": {
+    "deterministic_check_ordering": {
+      "behavior": "VerifyOrchestrator runs checks strictly in manifest order and short-circuits on the first non-Pass verdict.",
+      "status": "VERIFIED_SOUND",
+      "rationale": "Allows cheap deterministic checks (Builtin, Command) to short-circuit before expensive external polling or LLM-judge votes."
+    },
+    "fresh_box_semantics": {
+      "behavior": "VerifyCheck.Command with FRESH_BOX requires RecordedAttemptCommitWorkspace and materializes a new environment from the attempt commit SHA. Self-check failure preserves evidence without disposing.",
+      "status": "VERIFIED_SOUND",
+      "boundary": "In host mode without container environments, throws CheckEnvironmentUnavailableException leading to CannotVerify."
+    },
+    "cannot_verify_fail_closed": {
+      "behavior": "A single CannotVerify vote immediately terminates JudgeVoting and short-circuits to an unburned escalation. Infrastructure failures never silently pass.",
+      "status": "VERIFIED_SOUND",
+      "boundary": "Can be triggered unintentionally by non-JSON code fences in judge output (GNOMISH-JUDGE-04)."
+    },
+    "prompt_criteria_isolation": {
+      "behavior": "JudgePromptBuilder reads criteria from frozen PipelineLaw, preventing gnomes from modifying their own criteria on disk. TaskContext is enclosed in dynamic expanding delimiters (----- TASK DATA -----).",
+      "status": "PARTIALLY_SOUND",
+      "boundary": "Input boundary is protected by delimiters, but output extraction in JudgeVerdictExtractor is vulnerable to desynchronization (GNOMISH-JUDGE-03)."
+    }
+  },
+  "courts": [
+    "evidence/COURTS/JudgeVerificationCourt.groovy",
+    "evidence/COURTS/judge-verification-court.json"
+  ]
+}

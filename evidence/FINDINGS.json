@@ -1,0 +1,160 @@
+{
+  "audit_target": "Gnomish Factory (commit 7727344232d339867559ee968b4f695bf99f6a85)",
+  "audited_at": "2026-09-29T20:45:00Z",
+  "findings": [
+    {
+      "id": "GNOMISH-CLAIM-01",
+      "title": "GithubClaimLease >100-Comment Pagination Truncation Race",
+      "classification": "CONFIRMED",
+      "invariant": "Mutual exclusion: at most one factory worker acquires the exclusive claim lease on an issue.",
+      "source_locators": [
+        "adapters/github/src/main/java/com/github/oinsio/gnomish/adapter/tracker/github/GithubClaimLease.java:185",
+        "adapters/github/src/main/java/com/github/oinsio/gnomish/adapter/tracker/github/GithubClaimWindow.java:42"
+      ],
+      "evidence": "evidence/COURTS/ClaimPaginationRaceCourt.groovy",
+      "severity": "CRITICAL",
+      "severity_rationale": "Directly breaks single-holder authority. When an issue has >100 comments, two concurrent claimants beyond comment 100 both return ClaimResult.Acquired, creating active split-brain execution on the same task.",
+      "description": "GithubClaimLease.listComments queries /issues/{n}/comments?per_page=100 without handling Link headers or subsequent pages. When comment count exceeds 100, page 1 comments (1..100) fill the buffer. Boundary markers and competing claims on page 2+ are completely unseen by listComments. GithubClaimWindow parses only page 1, and for both racing claimants on page 2+, winnerAgainst(ownCommentId) returns Optional.empty(). Both claimants fall back to winnerId = ownCommentId and return ClaimResult.Acquired. Confirmed by physical WireMock reproducer."
+    },
+    {
+      "id": "GNOMISH-FENCE-01",
+      "title": "BestEffortPush Non-Fast-Forward Rejection is Remote Protection Only, Not a Local Fence",
+      "classification": "CONFIRMED",
+      "invariant": "Fail-closed fencing: a superseded or zombie worker must not advance round persistence when its push is rejected.",
+      "source_locators": [
+        "adapters/git/src/main/java/com/github/oinsio/gnomish/adapter/git/BestEffortPush.java:73",
+        "adapters/git/src/main/java/com/github/oinsio/gnomish/adapter/git/GitAttemptPersistence.java:82",
+        "application/src/main/java/com/github/oinsio/gnomish/app/take/RevocationCheckingAttemptPersistence.java:175"
+      ],
+      "evidence": "evidence/COURTS/lease-reaper-takeover-court.json",
+      "severity": "CRITICAL",
+      "severity_rationale": "ADR 0002 documents git non-fast-forward push rejection as a hard zombie fence. In code, push rejection is swallowed as a WARN and does not throw, delegating the entire fence to post-persist tracker checks.",
+      "description": "BestEffortPush.pushBestEffort is void; on a nonzero push command result it calls PushOutcome.describe(\"push\", result), logs WARN OperatorEvent.PUSH_FAILED when outcome text is non-null, then returns normally without throwing. GitAttemptPersistence treats local commit creation as the durability boundary. Consequently, round persistence succeeds locally and proceeds to RevocationCheckingAttemptPersistence, rather than terminating immediately."
+    },
+    {
+      "id": "GNOMISH-FENCE-02",
+      "title": "Truncation-Assisted Zombie Fence Defeat and Divergent Local Round Execution",
+      "classification": "CONFIRMED",
+      "invariant": "Zombie execution termination: a superseded worker must halt when checked against tracker authority.",
+      "source_locators": [
+        "adapters/github/src/main/java/com/github/oinsio/gnomish/adapter/tracker/github/GithubTaskFetcher.java:108",
+        "application/src/main/java/com/github/oinsio/gnomish/app/take/RevocationCheckingAttemptPersistence.java:175"
+      ],
+      "evidence": "evidence/COURTS/lease-reaper-takeover-court.json",
+      "severity": "CRITICAL",
+      "severity_rationale": "Combines GNOMISH-CLAIM-01 and GNOMISH-FENCE-01. When comment count exceeds 100, the tracker check fails to detect revocation, allowing the zombie worker to execute subsequent rounds locally and perform uncoordinated actions.",
+      "description": "ZombieFenceSpec asserts that a zombie worker halts because tracker.fetchTask() returns Working(NEW_HOLDER). However, on GitHub tracker implementation, GithubTaskFetcher queries /comments?per_page=100. If instance A was reaped and instance B claimed at comment 102: when zombie instance A calls fetchTask(), it receives page 1 (comments 1..100) where instance A appears as the latest claim. fetchTask() returns Working('instance-A')! RevocationCheckingAttemptPersistence checks holder.equals(instanceId) which evaluates to TRUE. Because BestEffortPush swallowed the push failure and returned normally, zombie instance A continues executing subsequent rounds locally, producing diverging local commits."
+    },
+    {
+      "id": "GNOMISH-TRACKER-02",
+      "title": "Heartbeat and Reaper Blinding via Comment Truncation",
+      "classification": "CONFIRMED",
+      "invariant": "Tracker authority convergence: heartbeat renewal and stale claim removal must observe active tenures.",
+      "source_locators": [
+        "adapters/github/src/main/java/com/github/oinsio/gnomish/adapter/tracker/github/GithubHeartbeat.java:140",
+        "adapters/github/src/main/java/com/github/oinsio/gnomish/adapter/tracker/github/GithubStaleClaimRemoval.java:98"
+      ],
+      "evidence": "evidence/COURTS/lease-reaper-takeover-court.json",
+      "severity": "HIGH",
+      "severity_rationale": "Causes healthy workers to self-fence prematurely due to false ClaimGone detection, while blinding the reaper from observing newer claims beyond comment 100.",
+      "description": "GithubHeartbeat.resolveClaim and GithubStaleClaimRemoval.reReadThread both execute GET /issues/{num}/comments?per_page=100 without pagination. If the active claim comment was posted at index >= 101, resolveClaim returns Optional.empty(), causing GithubHeartbeat to return BeatResult.Lost(ClaimGone). A healthy live worker immediately self-fences. Conversely, the reaper reReadThread inspects obsolete page 1 data and fails to observe newer claims or boundaries."
+    },
+    {
+      "id": "GNOMISH-JUDGE-01",
+      "title": "JudgeVerdictExtractor Pass Smuggling via Preliminary Code Fence",
+      "classification": "CONFIRMED",
+      "invariant": "Verification soundness: stage evaluation must reflect the judge model's terminal verdict, not preliminary text.",
+      "source_locators": [
+        "adapters/agent/src/main/java/com/github/oinsio/gnomish/adapter/agent/JudgeVerdictExtractor.java:45",
+        "adapters/agent/src/main/java/com/github/oinsio/gnomish/adapter/agent/JudgePromptBuilder.java:62"
+      ],
+      "evidence": "evidence/COURTS/JudgeVerificationCourt.groovy",
+      "severity": "HIGH",
+      "severity_rationale": "Allows failing code to advance into delivery. A model discussing test examples or mock configs with {\"passed\": true} causes the extractor to emit Pass, completely ignoring a terminal Fail verdict.",
+      "description": "JudgePromptBuilder asks the judge model to end its message with a JSON verdict object. However, JudgeVerdictExtractor uses FENCE.matcher(text).find() to match the FIRST markdown code fence and scans for the FIRST balanced JSON object from the start. If the judge quotes a test case, mock configuration, or preliminary reasoning containing {\"passed\": true} before its terminal verdict, the extractor extracts the preliminary fence and returns Verdict.Pass(), discarding terminal failure findings. Confirmed by physical Spock court."
+    },
+    {
+      "id": "GNOMISH-JUDGE-02",
+      "title": "Non-JSON Code Fence Preceding Verdict Induces Premature CannotVerify Escalation",
+      "classification": "CONFIRMED",
+      "invariant": "Evaluation determinism: code formatting in explanations must not corrupt stage attempt accounting.",
+      "source_locators": [
+        "adapters/agent/src/main/java/com/github/oinsio/gnomish/adapter/agent/JudgeVerdictExtractor.java:45",
+        "adapters/agent/src/main/java/com/github/oinsio/gnomish/adapter/agent/JudgeVoting.java:82"
+      ],
+      "evidence": "evidence/COURTS/JudgeVerificationCourt.groovy",
+      "severity": "MEDIUM",
+      "severity_rationale": "Causes premature human escalation without burning stage retry attempts when the judge includes code examples.",
+      "description": "When a judge model quotes illustrative code (Java/Python/Bash) with braces prior to its JSON verdict fence, JudgeVerdictExtractor attempts to parse that first fence as JSON. Parsing fails and returns Verdict.CannotVerify. In JudgeVoting, a single CannotVerify vote short-circuits the voting loop and marks the check CannotVerify, which StageAttemptLoop treats as an unburned infrastructure failure, triggering human escalation without consuming attempt budgets."
+    },
+    {
+      "id": "GNOMISH-JUDGE-03",
+      "name": "Judge Tool-Permission Argv Collapse on Empty Read-Only Intersection",
+      "classification": "CONFIRMED",
+      "invariant": "Least privilege: judge agents must run with strictly read-only tools.",
+      "source_locators": [
+        "adapters/agent/src/main/java/com/github/oinsio/gnomish/adapter/agent/AgentInvocationOptions.java:85"
+      ],
+      "evidence": "evidence/COURTS/JudgeVerificationCourt.groovy",
+      "severity": "HIGH",
+      "severity_rationale": "Policy/argv collapse physically proven: when manifest contains only write tools or empty list, the --allowedTools restriction is omitted from argv.",
+      "description": "AgentInvocationOptions.renderForJudge filters manifest allowedTools against JUDGE_READ_ONLY_TOOLS (['Read', 'Grep', 'Glob']). When the intersection is empty (e.g. stage requested only ['Write', 'Bash'] or []), effectiveJudgeAllowedTools returns []. addToolListFlag omits the --allowedTools flag entirely when the list is empty, generating argv containing only ['--model', '<model>']. Evidence boundary: while argv omission is physically confirmed by JudgeVerificationCourt, live network test against provider is bounded by Teamwork anti-recursion policy; whether print mode defaults to unprompted writes or rejects tools is unverified at runtime."
+    },
+    {
+      "id": "GNOMISH-JUDGE-04",
+      "title": "Shared Container Instance Reuse Across Attempt Judge Votes",
+      "classification": "CONFIRMED",
+      "invariant": "Voter independence: judge votes must evaluate attempts in independent, uncontaminated environments.",
+      "source_locators": [
+        "adapters/agent/src/main/java/com/github/oinsio/gnomish/adapter/agent/FreshJudgeEnvironments.java:56"
+      ],
+      "evidence": "evidence/COURTS/JudgeVerificationCourt.groovy",
+      "severity": "MEDIUM",
+      "severity_rationale": "Reuses the exact same container across multiple votes for the same attempt commit SHA. If combined with tool leakage, earlier votes contaminate later votes.",
+      "description": "FreshJudgeEnvironments caches and reuses the same TaskExecutionEnvironment instance across all votes for an attempt commit SHA. The architectural justification assumed judges are strictly read-only. If GNOMISH-JUDGE-03 omits tool restrictions, an earlier voter that performs filesystem writes mutates the environment for subsequent voters, undermining voting independence."
+    },
+    {
+      "id": "GNOMISH-SANDBOX-01",
+      "title": "Egress Guard Permissive Host Routing to Endpoints on Allowlisted Domains",
+      "classification": "CONFIRMED",
+      "invariant": "Data loss prevention: sandboxed processes must not exfiltrate source code or credentials.",
+      "source_locators": [
+        "sandbox/docker/src/main/java/com/github/oinsio/gnomish/sandbox/environment/EgressGuardConfig.java:53",
+        "sandbox/docker/src/main/java/com/github/oinsio/gnomish/sandbox/environment/EgressGuard.java:92"
+      ],
+      "evidence": "evidence/COURTS/sandbox-security-boundary-court.json",
+      "severity": "HIGH",
+      "severity_rationale": "Shipped core enforces only L4/SNI hostname allowlisting without TLS inspection. Hostname allowlisting permits the network path to arbitrary endpoints on that host.",
+      "description": "Shipped core egress guard uses mitmdump strictly at L4/SNI/CONNECT level with data.ignore_connection = True (no TLS termination or path inspection). When a domain such as github.com is allowlisted, the network path to any endpoint on that host is open; successful exfiltration or write operations (e.g. git push to an external repository or posting to an issue/gist) depend on attacker-available or foreign credentials, or unauthenticated writable endpoints. Crucial distinction: L7 path/verb enforcement, TLS re-signing, and local AI gateway credential scrubbing are proposed future hardenings (add-sandbox-hardening, Change B), NOT shipped in the current core codebase."
+    },
+    {
+      "id": "GNOMISH-SANDBOX-02",
+      "title": "Host Escape and Docker Daemon Socket Access",
+      "classification": "DISPROVED",
+      "invariant": "Host isolation: in-box container processes must not access host sockets, host filesystems, or escape namespace boundaries.",
+      "source_locators": [
+        "sandbox/docker/src/main/java/com/github/oinsio/gnomish/sandbox/environment/DockerCommands.java:86",
+        "sandbox/docker/src/main/java/com/github/oinsio/gnomish/sandbox/environment/ContainerFileChannel.java:134",
+        "sandbox/docker/src/main/java/com/github/oinsio/gnomish/sandbox/environment/DeclaredVolumeOverrides.java:88"
+      ],
+      "evidence": "evidence/COURTS/sandbox-security-boundary-court.json",
+      "severity": "INFORMATIONAL",
+      "severity_rationale": "Hypothesis that containers can access host sockets or escape volumes was physically disproved by code inspection and existing test suite.",
+      "description": "Task containers mount exclusively a single per-task named volume (/gnomish/work). No host filesystems or sockets (/var/run/docker.sock) are mounted. Container file channel normalizes paths lexically and forbids traversal outside workingCopy or scratch, blocking .git/**. Anonymous image volumes are replaced with ephemeral tmpfs, and EnvironmentSelfCheck enforces non-root execution (UID 1000) and internal network configuration fail-closed."
+    },
+    {
+      "id": "GNOMISH-GIT-01",
+      "title": "Remote Git History Overwrite via Zombie Force-Push",
+      "classification": "DISPROVED",
+      "invariant": "Remote branch immutability: a superseded zombie worker must not overwrite remote git history.",
+      "source_locators": [
+        "adapters/git/src/main/java/com/github/oinsio/gnomish/adapter/git/GitCli.java:112",
+        "bootstrap/src/test/groovy/com/github/oinsio/gnomish/app/NoForcePushGuardSpec.groovy:15"
+      ],
+      "evidence": "evidence/COURTS/git-split-authority-court.json",
+      "severity": "INFORMATIONAL",
+      "severity_rationale": "Hypothesis that a zombie worker could overwrite remote history via forced pushes was physically disproved.",
+      "description": "Git commands in the codebase never supply --force or +refspec. NoForcePushGuardSpec scans all git command builders at compile time. Git remote origin rejects non-fast-forward pushes. Remote git branch truth remains protected from destruction even when local round execution diverges."
+    }
+  ]
+}

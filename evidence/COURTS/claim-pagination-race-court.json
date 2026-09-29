@@ -1,0 +1,30 @@
+{
+  "court": "claim-pagination-race-adversarial-audit",
+  "cell": "gnomish.claim-pagination-race",
+  "created_at": "2026-09-29T19:55:00Z",
+  "evaluated_commit": "7727344232d339867559ee968b4f695bf99f6a85",
+  "judges": [
+    {
+      "name": "GithubClaimLease Pagination Completeness Judge",
+      "target_component": "com.github.oinsio.gnomish.adapter.tracker.github.GithubClaimLease",
+      "method": "listComments",
+      "invariant": "listComments MUST observe all relevant post-boundary comments regardless of issue comment thread depth.",
+      "tested_scenario": "Thread has 100 comments on page 1, boundary marker at comment 101, competing claims at 102 and 103",
+      "verdict": "FAIL",
+      "physical_result": "listComments queries only ?per_page=100 and parses page 1 alone. No pagination follow-up or Link header parsing exists. Comments 101, 102, 103 are omitted.",
+      "classification": "CONFIRMED"
+    },
+    {
+      "name": "GithubClaimWindow Mutual Exclusion Judge",
+      "target_component": "com.github.oinsio.gnomish.adapter.tracker.github.GithubClaimWindow",
+      "method": "winnerAgainst",
+      "invariant": "Between two concurrent racing claims, at most one can return Acquired and all others must return Held.",
+      "tested_scenario": "Two concurrent instances A and B post claims 102 and 103 beyond page 1",
+      "verdict": "FAIL",
+      "physical_result": "Because neither claim appears in the truncated page 1 window, winnerAgainst(ownCommentId) returns Optional.empty() for both instances. Both instances fall back to winnerId = ownCommentId and return ClaimResult.Acquired. Neither instance yields or deletes its comment.",
+      "classification": "CONFIRMED"
+    }
+  ],
+  "overall_verdict": "VULNERABILITY_CONFIRMED",
+  "reproducer_spec": "evidence/COURTS/ClaimPaginationRaceCourt.groovy"
+}
